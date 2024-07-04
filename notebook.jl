@@ -50,8 +50,8 @@ end
 # ╔═╡ 29ce2bef-bd26-4d96-971f-fc44acb687eb
 """
 generate a lattice of size nmax according to params.
-iterate over current sites and add if the current point is new.
-check for neighbours while checking overlap; we have to iterate twice anyway.
+iterate over current sites, add if the current point is new.
+then loop again to add indices of neighbours.
 """
 function lattice_generation(params::LatticeParams, nmax::Int)
 	lv = lattice_vectors(params)
@@ -81,6 +81,8 @@ function lattice_generation(params::LatticeParams, nmax::Int)
 			end
 		end
 	end
+	# in theory there should be a way to generate neighbour data while
+	# adding sites, but in practice it's easier just to do this
 	for (i, s1) in enumerate(eachcol(sites))
 		k = 1
 		for (j, s2) in enumerate(eachcol(sites))
@@ -101,6 +103,7 @@ function plot_lattice(l::Lattice)
 end
 
 # ╔═╡ 97eadd96-16a8-4b63-81a3-09cc59cecbf8
+# test the lattice generation
 begin
 	hex = LatticeParams([[0.0, 0.0]], 1.0, 6)
 	square = LatticeParams([[0.0, 0.0]], 1.0, 4)
@@ -112,13 +115,25 @@ begin
 	plot_lattice(lattice)
 end
 
+# ╔═╡ d0e27739-0ed1-4a30-b69e-2db62ca539ee
+struct State
+	name::String
+	decay::Real
+end
+
 # ╔═╡ cd0a1835-cee5-43d5-b2f4-b09309363b4c
 """
 now we need to define a protein.
 parameters here are as follows:
-- ``n_p`` = the total number of different pigments we're considering
-- ``n_s`` = total number of different states on those pigments
-- ``n_{tot}`` = vector of length ``n_p`` = number of each pigment per protein
+- pigments = list of names of pigments
+- states = list of names of states on those pigments
+- ``n_p`` = `length(pigments)`
+- ``n_s`` = `length(states)`
+- ps = vector (``n_s``) labelling which pigment each state is on
+- dist = matrix (``n_s, n_s``) - which states are distinguishable for annihilation
+- ``n_{tot}`` = vector (``n_p``) = number of each pigment per protein
+- ``n_{thermal}`` = vector (``n_p``) = number of each pigment whose excited
+  state is thermally available
 - hop = vector of length ``n_s`` = intercomplex hopping rate per state
 - intra = matrix (``n_s``, ``n_s``) = decay rates on the diagonal,
   transfer rates between states on the off-diagonal
@@ -140,14 +155,107 @@ should be reasonable. Also the treatment of absorption and stimulated emission
 might need to be fleshed out, depending on what we want to do going forward.
 """
 struct Protein
+	pigments::Vector{String}
+	states::Vector{String}
 	nₚ::Integer
 	nₛ::Integer
+	ps::Vector{Int}
+	dist::Matrix{Bool}
 	n_tot::Vector{Integer}
+	n_thermal::Vector{Integer}
 	hop::Vector{Real}
 	intra::Matrix{Real}
 	ann::Matrix{Real}
 	xsec::Vector{Real}
 	emissive::Vector{Bool}
+end
+
+# ╔═╡ 0afa851d-c9cc-4815-8b16-3197bf6670ba
+"""
+for an given protein and vector of current occupancies of each state,
+calculate the rates of each possible process and return a vector of them.
+
+Need a way to index these rates correctly so that once a move's accepted,
+we know its effect. Unsure how to do this yet.
+"""
+function rates(n::Matrix{Integer}, i::Integer, 
+	p::Protein, t::Real, pulse::Vector{Real})
+	rates = []
+	# current intensity of pulse
+	if t < length(pulse) * dt
+		ft = pulse[int(t / dt) + 1]
+	else 
+		ft = 0
+	end
+	# absorption
+	for k=1:p.nₛ
+		g = ft * xsec[k] * (p.n_tot[p.ps[k]] - n[i, k]) / p.n_tot[p.ps[k]]
+		push!(rates, g)
+	end
+	# stimulated emission
+	for k=1:p.nₛ
+		g = ft * xsec[k] * n[i, k] / p.n_tot[p.ps[k]]
+		push!(rates, g)
+	end
+	# hops
+	for k=1:p.nₛ
+		for j in l.sites[i].nn
+			g = n[i, k] * p.hop[i]
+			# entropy factor - rate is reduced if hopping to a higher-occupied state
+			if n[i, k] < n[j, k]
+				g *= (n[i, k] * (p.n_thermal[p.ps[k]] - n[j, k])) / 
+				((n[j, k] + 1) * (p.n_thermal[p.ps[k]] - n[i, k] + 1))
+			push!(rates, g)
+			end
+		end
+	end
+	# intra-complex	from state k to state m
+	for k=1:p.nₛ
+		for m=1:p.nₛ
+			# if both states are fully occupied, prevent transfer
+			if n[i, k] < p.n_thermal[p.ps[k]] && n[i, m] < p.n_thermal[p.ps[m]]
+				g = n[i, k] * intra[k, m]
+			else
+				g = 0.0
+			end
+			push!(rates, g)
+		end
+	end
+	# annihilation
+	for k=1:p.nₛ
+		for m=1:p.nₛ
+			if p.dist[k, m]
+				# distinguishable
+				g = n[i, k] * n[i, m] * ann[k, m]
+			else
+				neff = n[i, k] + n[i, m]
+				g = ann[k, m] * (neff * (neff - 1)) / 2.0
+			end
+			push!(rates, g)
+		end
+	end
+	return rates
+end
+
+# ╔═╡ 652428a5-4618-4986-bf87-cf7819b4359e
+""" carry out an accepted move """
+function move!(n, move_type, i, x, j=i, y=x, which_ann=1)
+	if move_type == "hop"
+		n[i, x] -= 1
+		n[j, y] += 1
+	elseif move_type == "decay"
+		n[i, x] -= 1
+	elseif move_type == "gen"
+		n[i, x] += 1
+	elseif move_type == "se"
+		n[i, x] -= 1
+	elseif move_type == "ann"
+		if which_ann == 1
+			n[i, x] -= 1
+		else
+			n[j, y] -= 1
+		end
+	end
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -166,7 +274,7 @@ Graphs = "~1.9.0"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.10.4"
+julia_version = "1.10.3"
 manifest_format = "2.0"
 project_hash = "a0bd92f3b844cbfd97daa9564f0fad17013832bb"
 
@@ -428,6 +536,9 @@ version = "5.8.0+1"
 # ╠═29ce2bef-bd26-4d96-971f-fc44acb687eb
 # ╠═d4fb1c0c-5fd5-4fb9-809a-741c1952095b
 # ╠═97eadd96-16a8-4b63-81a3-09cc59cecbf8
+# ╠═d0e27739-0ed1-4a30-b69e-2db62ca539ee
 # ╠═cd0a1835-cee5-43d5-b2f4-b09309363b4c
+# ╠═0afa851d-c9cc-4815-8b16-3197bf6670ba
+# ╠═652428a5-4618-4986-bf87-cf7819b4359e
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
