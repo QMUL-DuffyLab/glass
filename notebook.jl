@@ -170,71 +170,99 @@ struct Protein
 	emissive::Vector{Bool}
 end
 
-# ╔═╡ 0afa851d-c9cc-4815-8b16-3197bf6670ba
+# ╔═╡ 038c9e9c-5252-4801-9259-b669d42e2ccd
 """
-for an given protein and vector of current occupancies of each state,
-calculate the rates of each possible process and return a vector of them.
-
-Need a way to index these rates correctly so that once a move's accepted,
-we know its effect. Unsure how to do this yet.
+OK - taking a different approach here.
+Based on the current state of the pulse and current populations,
+figure out which moves are possible, whether they can lead to loss
+of population, and whether that loss is emissive. Return the rate of
+the process and information about it, so we can then run it through
+Metropolis and bin any decays if the move's accepted.
+We don't need to figure out whether it's emissive here, so long as we 
+figure out at the start of the simulation which decays are emissive, 
+then we can just index back into that.
+- `n`: matrix of occupations of each state on each site.
+- `i`: current site index.
+- `p`: which `protein` is on this site (atm we only have one type).
+- `l`: the lattice.
+- `ft`: the current intensity of the pulse (only considering excitation
+  at one wavelength, at least currently.)
 """
-function rates(n::Matrix{Integer}, i::Integer, 
-	p::Protein, t::Real, pulse::Vector{Real})
-	rates = []
+function propose_move(n::Matrix{Int}, i::Integer, p::Protein,
+	l::Lattice, ft::Real)
+	
+	move_types = []
+	rate = 0.0
+	emissive = false
+	"""
 	# current intensity of pulse
+	# this can be done once in the MC loop and passed to the function
 	if t < length(pulse) * dt
 		ft = pulse[int(t / dt) + 1]
 	else 
 		ft = 0
 	end
-	# absorption
-	for k=1:p.nₛ
-		g = ft * xsec[k] * (p.n_tot[p.ps[k]] - n[i, k]) / p.n_tot[p.ps[k]]
-		push!(rates, g)
+	"""
+	
+	if ft > 0
+		append!(move_types, ["gen", "se"])
 	end
-	# stimulated emission
-	for k=1:p.nₛ
-		g = ft * xsec[k] * n[i, k] / p.n_tot[p.ps[k]]
-		push!(rates, g)
+	if sum(n[i, :] > 0)
+		append!(move_types, ["hop", "transfer", "decay"])
 	end
-	# hops
-	for k=1:p.nₛ
-		for j in l.sites[i].nn
-			g = n[i, k] * p.hop[i]
-			# entropy factor - rate is reduced if hopping to a higher-occupied state
-			if n[i, k] < n[j, k]
-				g *= (n[i, k] * (p.n_thermal[p.ps[k]] - n[j, k])) / 
-				((n[j, k] + 1) * (p.n_thermal[p.ps[k]] - n[i, k] + 1))
-			push!(rates, g)
-			end
+	if sum(n[i, :] > 1)
+		append!(move_types, "ann")
+	end
+	if length(move_types) == 0
+		return
+	end
+
+	# pick a type of move
+	mt = move_types[rand(1:length(move_types))]
+	if mt == "gen"
+		s = rand(p.xsec[p.xsec .> 0.0])
+		rate = ft * p.xsec[s] * (p.n_tot[p.ps[s]] - n[i, s]) / p.n_tot[p.ps[s]]
+	elseif mt == "se"
+		s = rand(p.xsec[p.xsec .> 0.0])
+		rate = ft * p.xsec[s] * n[i, s] / p.n_tot[p.ps[s]]
+		loss_index = s
+	elseif mt == "hop"
+		s = rand(1:p.nₛ)
+		nn = rand(l.sites[i].nn)
+		rate = n[i, s] * p.hop[s]
+		# entropy factor - rate is reduced if hopping to a higher-occupied state
+		if n[i, s] < n[nn, s]
+			rate *= (n[i, s] * (p.n_thermal[p.ps[s]] - n[nn, s])) / 
+			((n[nn, s] + 1) * (p.n_thermal[p.ps[s]] - n[i, s] + 1))
 		end
-	end
-	# intra-complex	from state k to state m
-	for k=1:p.nₛ
-		for m=1:p.nₛ
-			# if both states are fully occupied, prevent transfer
-			if n[i, k] < p.n_thermal[p.ps[k]] && n[i, m] < p.n_thermal[p.ps[m]]
-				g = n[i, k] * intra[k, m]
-			else
-				g = 0.0
-			end
-			push!(rates, g)
+	elseif mt == "transfer"
+		si = rand(1:p.nₛ)
+		sf = rand(1:p.nₛ)
+		while sf == si
+			# gotta be intracomplex transfer between two species
+			sf = rand(1:p.nₛ)
 		end
-	end
-	# annihilation
-	for k=1:p.nₛ
-		for m=1:p.nₛ
-			if p.dist[k, m]
-				# distinguishable
-				g = n[i, k] * n[i, m] * ann[k, m]
-			else
-				neff = n[i, k] + n[i, m]
-				g = ann[k, m] * (neff * (neff - 1)) / 2.0
-			end
-			push!(rates, g)
+		rate = n[i, si] * intra[si, sf] # is this right? check
+	elseif mt == "decay"
+		s = rand(1:p.nₛ)
+		rate = n[i, si] * intra[si, si]
+		emissive = p.emissive[s]
+		loss_index = s + p.nₛ
+	elseif mt == "ann"
+		si = rand(1:p.nₛ)
+		sf = rand(1:p.nₛ)
+		if p.dist[si, sf]
+			# distinguishable
+			g = n[i, si] * n[i, sf] * ann[si, sf]
+		else
+			neff = n[i, si] + n[i, sf]
+			g = ann[si, sf] * (neff * (neff - 1)) / 2.0
 		end
+		# this isn't right yet - need to know which gets annihilated
+		# in order to know which column to increment
+		loss_index = sf + (2 + si) * p.nₛ
 	end
-	return rates
+	return (rate, move_type, loss_index, emissive)
 end
 
 # ╔═╡ 652428a5-4618-4986-bf87-cf7819b4359e
@@ -247,8 +275,6 @@ function move!(n, move_type, i, x, j=i, y=x, which_ann=1)
 		n[i, x] -= 1
 	elseif move_type == "gen"
 		n[i, x] += 1
-	elseif move_type == "se"
-		n[i, x] -= 1
 	elseif move_type == "ann"
 		if which_ann == 1
 			n[i, x] -= 1
@@ -256,6 +282,114 @@ function move!(n, move_type, i, x, j=i, y=x, which_ann=1)
 			n[j, y] -= 1
 		end
 	end
+end
+
+# ╔═╡ f8464bc1-eeee-4bea-a5d0-291045c1b2da
+begin
+	xsec = [1.0E-20, 0.0, 2E-20, 0.0, 0.0]
+	print(rand(xsec[xsec .> 0.0]))
+end
+
+# ╔═╡ 0afa851d-c9cc-4815-8b16-3197bf6670ba
+"""
+for an given protein and vector of current occupancies of each state,
+calculate the rates of each possible process and return a vector of them.
+"""
+function rates(n::Matrix{Integer}, i::Integer, 
+	p::Protein, l::Lattice, t::Real, pulse::Vector{Real})
+	"""
+	there are nₛ intra-complex transfers, nₛ annihilations, up to
+	coordination inter-complex hops, plus a generation and stimulated emission
+	rate for each species in the protein. Hence, nₛ (2nₛ + coordination + 2)
+	"""
+	rates = fill(0.0, p.nₛ * (2 * p.nₛ + l.params.coordination + 2))
+	move_type = fill("", p.nₛ * (2 * p.nₛ + l.params.coordination + 2))
+	# we want to know which of these rates corresponds to a loss in population
+	# - losses will give the indices of rates of these, then emissive tells us
+	# which of these are emissive.
+	losses = fill(0, p.nₛ * (p.nₛ + 2))
+	emissive = fill(false, p.nₛ * (p.nₛ + 2))
+	loss_index = 1
+	rate_index = 1
+	# current intensity of pulse
+	if t < length(pulse) * dt
+		ft = pulse[int(t / dt) + 1]
+	else 
+		ft = 0
+	end
+	# absorption
+	for k=1:p.nₛ
+		g = ft * xsec[k] * (p.n_tot[p.ps[k]] - n[i, k]) / p.n_tot[p.ps[k]]
+		rates[rate_index] = g
+		move_type[rate_index] = "gen"
+		rate_index += 1
+	end
+	# stimulated emission
+	for k=1:p.nₛ
+		g = ft * xsec[k] * n[i, k] / p.n_tot[p.ps[k]]
+		rates[rate_index] = g
+		move_type[rate_index] = "decay"
+		losses[loss_index] = rate_index
+		rate_index += 1
+		loss_index += 1
+	end
+	# hops
+	for k=1:p.nₛ
+		for j=1:l.params.coordination
+			if l.sites[i].nn[j] != 0
+				g = n[i, k] * p.hop[k]
+				# entropy factor - rate is reduced if hopping to a higher-occupied state
+				if n[i, k] < n[j, k]
+					g *= (n[i, k] * (p.n_thermal[p.ps[k]] - n[j, k])) / 
+				((n[j, k] + 1) * (p.n_thermal[p.ps[k]] - n[i, k] + 1))
+			
+				end
+			else
+				g = 0.0
+			end
+			rates[rate_index] = g
+			move_type[rate_index] = "hop"
+			rate_index += 1
+		end
+	end
+	# intra-complex	from state k to state m
+	for k=1:p.nₛ
+		for m=1:p.nₛ
+			g = n[i, k] * intra[k, m]
+			if k == m
+				losses[loss_index] = rate_index
+				move_type[rate_index] = "decay"
+				if p.emissive[k]
+					emissive[loss_index] = true
+				end
+				loss_index += 1
+			elseif k != m && n[i, m] == p.n_thermal[p.ps[m]]
+				# the final state is fully occupied - prevent transfer
+				g = 0.0
+			end
+			rates[rate_index] = g
+			move_type[rate_index] = "hop"
+			rate_index += 1
+		end
+	end
+	# annihilation
+	for k=1:p.nₛ
+		for m=1:p.nₛ
+			losses[loss_index] = rate_index
+			loss_index += 1
+			if p.dist[k, m]
+				# distinguishable
+				g = n[i, k] * n[i, m] * ann[k, m]
+			else
+				neff = n[i, k] + n[i, m]
+				g = ann[k, m] * (neff * (neff - 1)) / 2.0
+			end
+			rates[rate_index] = g
+			move_type[rate_index] = "ann"
+			rate_index += 1
+		end
+	end
+	return (rates, move_type, losses, emissive)
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -274,7 +408,7 @@ Graphs = "~1.9.0"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.10.3"
+julia_version = "1.10.4"
 manifest_format = "2.0"
 project_hash = "a0bd92f3b844cbfd97daa9564f0fad17013832bb"
 
@@ -539,6 +673,8 @@ version = "5.8.0+1"
 # ╠═d0e27739-0ed1-4a30-b69e-2db62ca539ee
 # ╠═cd0a1835-cee5-43d5-b2f4-b09309363b4c
 # ╠═0afa851d-c9cc-4815-8b16-3197bf6670ba
+# ╠═038c9e9c-5252-4801-9259-b669d42e2ccd
 # ╠═652428a5-4618-4986-bf87-cf7819b4359e
+# ╠═f8464bc1-eeee-4bea-a5d0-291045c1b2da
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
