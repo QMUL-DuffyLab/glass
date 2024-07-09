@@ -169,25 +169,44 @@ struct State
 	decay::Real
 end
 
+# ╔═╡ b1b44fd9-127d-4009-9cc1-993b357a6690
+function possible_moves(l::Lattice, i::Integer, n::Matrix{Integer}, ft::Real)
+	move_types = []
+	if ft > 0
+		append!(move_types, ["gen", "se"])
+	end
+	if sum(n[i, :] > 0)
+		append!(move_types, ["hop", "transfer", "decay"])
+	end
+	# this might require some more thought?
+	if sum(n[i, :] > 1)
+		append!(move_types, "ann")
+	end
+	return move_types
+end
+
 # ╔═╡ 038c9e9c-5252-4801-9259-b669d42e2ccd
 """
-OK - taking a different approach here.
 Based on the current state of the pulse and current populations,
-figure out which moves are possible, whether they can lead to loss
-of population, and whether that loss is emissive. Return the rate of
+figure out which moves are possible and whether 
+excitation energy will be lost as a result of the move. Return the rate of
 the process and information about it, so we can then run it through
 Metropolis and bin any decays if the move's accepted.
+
 We don't need to figure out whether it's emissive here, so long as we 
 figure out at the start of the simulation which decays are emissive, 
 then we can just index back into that.
+
 - `n`: matrix of occupations of each state on each site.
 - `i`: current site index.
 - `l`: the lattice.
 - `ft`: the current intensity of the pulse (only considering excitation
   at one wavelength, at least currently.)
+
+NB: this can be sped up by only picking states with nonzero populations.
+Figure out how to do that.
 """
-function propose_move(n::Matrix{Int}, i::Integer,
-	l::Lattice, ft::Real)
+function propose_move(l::Lattice, i::Integer, n::Matrix{Int}, ft::Real)
 	
 	move_types = []
 	rate = 0.0
@@ -199,20 +218,9 @@ function propose_move(n::Matrix{Int}, i::Integer,
 	ist = 0
 	fst = 0
 
-	"""
-	
-	if ft > 0
-		append!(move_types, ["gen", "se"])
-	end
-	if sum(n[i, :] > 0)
-		append!(move_types, ["hop", "transfer", "decay"])
-	end
-	if sum(n[i, :] > 1)
-		append!(move_types, "ann")
-	end
-	if length(move_types) == 0
-		return (0.0, "none", 0, 0, 0, 0, 0)
-	end
+	# get possible move types. this won't be empty because we check
+	# whether there are any in the monte carlo step before this function's called
+	move_types = possible_moves(l, i, n, ft)
 
 	# pick a type of move
 	mt = move_types[rand(1:length(move_types))]
@@ -306,8 +314,10 @@ end
 
 # ╔═╡ 9fbd7017-7bbb-4057-a609-1b079afb4207
 """
-one monte carlo step. attempt one move on each site on average;
-`propose_move` picks a possible move wherever possible.
+one monte carlo step. 
+attempt one of each type of possible move on each site on average;
+`propose_move` picks a possible move.
+
 once a move's been picked, run it through Metropolis; if it's accepted,
 carry it out and increment the histogram iff 1.) an excitation's been lost
 and 2.) we are currently binning decays.
@@ -322,21 +332,33 @@ function mc_step!(l::Lattice, n::Matrix{Integer}, t::Real, dt::Real,
 		ft = 0
 	end
 	
+	# pick each site once on average
 	for i=1:length(l)
-		s = rand(length(l)) # pick a random site
-		(rate, move_type, loss_index, isi, ist, fsi, fst) = propose_move(n, s, l, ft)
-		if move_type == "none"
-			continue # no possible moves here
+		s = rand(length(l))
+		move_types = possible_moves(l, s, n, ft)
+		if isempty(move_types)
+			continue
 		end
+		# attempt each possible move type once on average
+		for j=1:length(move_types)
+			# check whether any moves are possible now
+			move_types = possible_moves(l, s, n, ft)
+			if isempty(move_types)
+				break
+			end
+			
+			(rate, move_type, loss_index, isi, ist, fsi, fst) = propose_move(l, s, n, ft)
 		
-		# metropolis
-		prob = rate * exp(-1.0 * rate * dt)
-		if rand() < prob
-			# this needs sorting lol - add i, x, j, y to propose_move
-			move!(n, move_type, isi, ist, fsi, fst, l.sites[s].p.which_ann[ist, fst])
-			if bin && loss_index > 0
-				# increment the correct column of the histogram
-				counts[loss_index, floor(t / binwidth) + 1] += 1
+			# metropolis
+			prob = rate * exp(-1.0 * rate * dt)
+			if rand() < prob
+				# carry out the move - this changes population, which
+				# is why we have to check possible moves again above
+				move!(n, move_type, isi, ist, fsi, fst, l.sites[s].p.which_ann[ist, fst])
+				if bin && loss_index > 0
+					# increment the correct column of the histogram
+					counts[loss_index, floor(t / binwidth) + 1] += 1
+				end
 			end
 		end
 	end
@@ -372,7 +394,6 @@ begin
 	xsec = [1.0E-20, 0.0, 2E-20, 0.0, 0.0]
 	print(rand(xsec[xsec .> 0.0]))
 
-	
 end
 
 # ╔═╡ 0afa851d-c9cc-4815-8b16-3197bf6670ba
@@ -840,6 +861,7 @@ version = "5.8.0+1"
 # ╠═d4fb1c0c-5fd5-4fb9-809a-741c1952095b
 # ╠═d0e27739-0ed1-4a30-b69e-2db62ca539ee
 # ╠═0afa851d-c9cc-4815-8b16-3197bf6670ba
+# ╠═b1b44fd9-127d-4009-9cc1-993b357a6690
 # ╠═038c9e9c-5252-4801-9259-b669d42e2ccd
 # ╠═652428a5-4618-4986-bf87-cf7819b4359e
 # ╠═9fbd7017-7bbb-4057-a609-1b079afb4207
