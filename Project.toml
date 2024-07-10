@@ -1,0 +1,9 @@
+name = "Glass"
+uuid = "28fd0488-f12e-4819-8b67-310fda98db43"
+authors = ["callum <callum.gray.10@ucl.ac.uk>"]
+version = "0.1.0"
+
+[deps]
+GraphPlot = "a2cc645c-3eea-5389-862e-a155d0052231"
+Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"

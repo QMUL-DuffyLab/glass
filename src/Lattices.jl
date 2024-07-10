@@ -1,6 +1,6 @@
-module Lattices
+include("Proteins.jl")
 
-using Proteins, LinearAlgebra, Graphs, GraphPlot
+using LinearAlgebra, Graphs, GraphPlot, StatsBase
 
 # can use this to define arbitrary lattices
 struct LatticeParams
@@ -42,7 +42,8 @@ generate a lattice of size nmax according to params.
 iterate over current sites, add if the current point is new.
 then loop again to add indices of neighbours.
 """
-function lattice_generation(params::LatticeParams, nmax::Int, proteins::Vector{Protein}, rho)
+function lattice_generation(params::LatticeParams, nmax::Int,
+        proteins::Vector{Protein}, rho::Vector{<:Real})
     lv = lattice_vectors(params)
     nn = zeros(Integer, params.coordination, nmax)
     spacing = norm(lv[:, 1])
@@ -92,10 +93,16 @@ function plot_lattice(l::Lattice)
     gplot(g, xs, ys)
 end
 
-hex = LatticeParams([[0.0, 0.0]], 1.0, 6)
-square = LatticeParams([[0.0, 0.0]], 1.0, 4)
-line = LatticeParams([[0.0, 0.0]], 1.0, 2)
-# honeycomb doesn't work atm. need to fix
-honeycomb = LatticeParams([[0.0, 0.0], [0.0, -1.0]], 1.0, 6)
-
+function get_lattice(name)
+    if name == "hex"
+        lp = LatticeParams([[0.0, 0.0]], 1.0, 6)
+    elseif name == "square"
+        lp = LatticeParams([[0.0, 0.0]], 1.0, 4)
+    elseif name == "line"
+        lp = LatticeParams([[0.0, 0.0]], 1.0, 2)
+    elseif name == "honeycomb"
+        # honeycomb doesn't work atm. need to fix
+        lp = LatticeParams([[0.0, 0.0], [0.0, -1.0]], 1.0, 6)
+    end
+    return lp
 end

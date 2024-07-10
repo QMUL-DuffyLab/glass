@@ -4,169 +4,118 @@
 using Markdown
 using InteractiveUtils
 
-# ╔═╡ 8309ef8f-23d5-49a6-9cc2-cb210302c555
-using LinearAlgebra
-
-# ╔═╡ d536667a-0b7a-45ce-9471-5fe8d1b654d1
-using Graphs
-
-# ╔═╡ 38ecc0bf-1fb3-4c5e-b7d9-5ec608277104
-using GraphPlot
-
-# ╔═╡ 9f4eb629-f23f-4caa-a05b-c8618fce8b80
-using StatsBase
-
-# ╔═╡ cd0a1835-cee5-43d5-b2f4-b09309363b4c
-"""
-- pigments = list of names of pigments
-- states = list of names of states on those pigments
-- ``n_p`` = `length(pigments)`
-- ``n_s`` = `length(states)`
-- ps = vector (``n_s``) labelling which pigment each state is on
-- dist = matrix (``n_s, n_s``) - which states are distinguishable for annihilation
-- ``n_{tot}`` = vector (``n_p``) = number of each pigment per protein
-- ``n_{thermal}`` = vector (``n_p``) = number of each pigment whose excited
-  state is thermally available
-- hop = vector of length ``n_s`` = intercomplex hopping rate per state
-- intra = matrix (``n_s``, ``n_s``) = decay rates on the diagonal,
-  transfer rates between states on the off-diagonal
-- ann = matrix (``n_s``, ``n_s``) = annihilation rates between states
-- `which_ann` = matrix (``n_s``, ``n_s``) = which species (index) is annihilated
-- xsec = vector (``n_s``)? unsure about this yet. need it to get absorption
-  and stimulated emission rates
-- emissive = bool vector to tell us which of the possible decay pathways are
-  emissive, i.e. which we'd see in a TCSPC experiment. Unsure how long this will
-  have to be as yet; requies a bit of thought
-
-Putting all these together we can define a set of base rates for all the possible
-processes that can happen on the protein, and then define which of the 
-population losses are emissive; a lattice of these then gives us all the 
-data we need to run our simulated TCSPC experiment.
-
-There are some assumptions here - firstly, we assume that excitations can't hop
-between complexes and transfer between states at the same time, which I think
-should be reasonable. Also the treatment of absorption and stimulated emission
-might need to be fleshed out, depending on what we want to do going forward.
-"""
-struct Protein
-	pigments::Vector{String}
-	states::Vector{String}
-	nₚ::Integer
-	nₛ::Integer
-	ps::Vector{Int}
-	dist::Matrix{Bool}
-	n_tot::Vector{Integer}
-	n_thermal::Vector{Integer}
-	hop::Vector{Real}
-	intra::Matrix{Real}
-	ann::Matrix{Real}
-	which_ann::Matrix{Integer}
-	xsec::Vector{Real}
-	emissive::Vector{Bool}
+# ╔═╡ 948ebdca-a3ce-464e-98a3-637d1ea1a070
+begin
+	using Graphs, GraphPlot, StatsBase
+	include("src/Lattices.jl")
 end
 
-# ╔═╡ 18eb45f4-c158-4080-a0e9-dcc5e01c479e
-# this might be overkill, honestly, but we can use it to define arbitrary lattices
-struct LatticeParams
-	basis::Vector{Vector{Real}}
-	radius::Real
-	coordination::Integer
+# ╔═╡ 313a5a28-0fd6-4c25-a008-a6ec7108c705
+begin
+	l = lattice_generation(get_lattice("hex"), 200, [get_protein("lh2")], [1.0])
+	plot_lattice(l)
 end
 
-# ╔═╡ 0fe4a898-cf3c-4ed5-911c-361211ea7c9a
-struct Site
-	r::Vector{Real}
-	p::Protein
-end
-
-# ╔═╡ 19bbc9c5-18e8-43af-a307-90e133fe5200
-struct Lattice
-	params::LatticeParams
-	sites::Vector{Site}
-	A::Matrix{Integer}
-	nn::Matrix{Integer}
-end
-
-# ╔═╡ 2aaf887d-6984-4403-a8f6-bc1d36710899
-neighbours(p1, p2, spacing) = isapprox(norm(p1 - p2), spacing, atol=1e-6)
-
-# ╔═╡ f3955bc5-f06f-4956-b5aa-1f7f0cd29f19
+# ╔═╡ 0afa851d-c9cc-4815-8b16-3197bf6670ba
 """
-generate the near-neighbour lattice vectors for a given set of
-lattice parameters. need to check this for honeycomb?
+for an given protein and vector of current occupancies of each state,
+calculate the rates of each possible process and return a vector of them.
 """
-function lattice_vectors(params)
-	nn = zeros(Real, 2, params.coordination)
-	for i=1:params.coordination
-		ϕ = 2π * i/params.coordination
-		r = [[cos(ϕ) sin(ϕ)]; [-sin(ϕ) cos(ϕ)]] * [params.radius, 0]
-		nn[:, i] = r
+function rates(n::Matrix{Integer}, i::Integer, 
+	p::Protein, l::Lattice, t::Real, pulse::Vector{Real})
+	"""
+	there are nₛ intra-complex transfers, nₛ annihilations, up to
+	coordination inter-complex hops, plus a generation and stimulated emission
+	rate for each species in the protein. Hence, nₛ (2nₛ + coordination + 2)
+	"""
+	rates = fill(0.0, p.nₛ * (2 * p.nₛ + l.params.coordination + 2))
+	move_type = fill("", p.nₛ * (2 * p.nₛ + l.params.coordination + 2))
+	# we want to know which of these rates corresponds to a loss in population
+	# - losses will give the indices of rates of these, then emissive tells us
+	# which of these are emissive.
+	losses = fill(0, p.nₛ * (p.nₛ + 2))
+	emissive = fill(false, p.nₛ * (p.nₛ + 2))
+	loss_index = 1
+	rate_index = 1
+	# current intensity of pulse
+	if t < length(pulse) * dt
+		ft = pulse[int(t / dt) + 1]
+	else 
+		ft = 0
 	end
-	return nn
-end
-
-# ╔═╡ 29ce2bef-bd26-4d96-971f-fc44acb687eb
-"""
-generate a lattice of size nmax according to params.
-iterate over current sites, add if the current point is new.
-then loop again to add indices of neighbours.
-"""
-function lattice_generation(params::LatticeParams, nmax::Int, proteins::Vector{Protein}, rho)
-	lv = lattice_vectors(params)
-	nn = zeros(Integer, params.coordination, nmax)
-	spacing = norm(lv[:, 1])
-	ps = sample(proteins, Weights(rho), nmax)
-	sites = Vector{Site}(undef, nmax)
-	sites[1] = Site(params.basis[1], ps[1])
-	adj = zeros(Integer, nmax, nmax)
-	n_sites = 1
-	while n_sites < nmax
-		for site in sites
-			for n in eachcol(lv)
-				for b in params.basis
-					ri = site.r + n + b
-					add = true
-					for (i, site2) in enumerate(sites[1:n_sites])
-						if isapprox(ri, site2.r, atol=1e-6)
-							add = false
-							break
-						end
-					end
-					if add && n_sites < nmax
-						n_sites += 1
-						sites[n_sites] = Site(ri, ps[n_sites])
-					end
+	# absorption
+	for k=1:p.nₛ
+		g = ft * xsec[k] * (p.n_tot[p.ps[k]] - n[i, k]) / p.n_tot[p.ps[k]]
+		rates[rate_index] = g
+		move_type[rate_index] = "gen"
+		rate_index += 1
+	end
+	# stimulated emission
+	for k=1:p.nₛ
+		g = ft * xsec[k] * n[i, k] / p.n_tot[p.ps[k]]
+		rates[rate_index] = g
+		move_type[rate_index] = "decay"
+		losses[loss_index] = rate_index
+		rate_index += 1
+		loss_index += 1
+	end
+	# hops
+	for k=1:p.nₛ
+		for j=1:l.params.coordination
+			if l.sites[i].nn[j] != 0
+				g = n[i, k] * p.hop[k]
+				# entropy factor - rate is reduced if hopping to a higher-occupied state
+				if n[i, k] < n[j, k]
+					g *= (n[i, k] * (p.n_thermal[p.ps[k]] - n[j, k])) / 
+				((n[j, k] + 1) * (p.n_thermal[p.ps[k]] - n[i, k] + 1))
+			
 				end
+			else
+				g = 0.0
 			end
+			rates[rate_index] = g
+			move_type[rate_index] = "hop"
+			rate_index += 1
 		end
 	end
-	# in theory there should be a way to generate neighbour data while
-	# adding sites, but in practice it's easier just to do this
-	for (i, s1) in enumerate(sites)
-		k = 1
-		for (j, s2) in enumerate(sites)
-			if neighbours(s1.r, s2.r, spacing)
-				adj[i, j] = 1
-				nn[k, i] = j
-				k += 1
+	# intra-complex	from state k to state m
+	for k=1:p.nₛ
+		for m=1:p.nₛ
+			g = n[i, k] * intra[k, m]
+			if k == m
+				losses[loss_index] = rate_index
+				move_type[rate_index] = "decay"
+				if p.emissive[k]
+					emissive[loss_index] = true
+				end
+				loss_index += 1
+			elseif k != m && n[i, m] == p.n_thermal[p.ps[m]]
+				# the final state is fully occupied - prevent transfer
+				g = 0.0
 			end
+			rates[rate_index] = g
+			move_type[rate_index] = "hop"
+			rate_index += 1
 		end
 	end
-	Lattice(params, sites, adj, nn)
-end
-
-# ╔═╡ d4fb1c0c-5fd5-4fb9-809a-741c1952095b
-function plot_lattice(l::Lattice)
-	g = SimpleGraph(l.A)
-	xs = [s.r[1] for s in l.sites]
-	ys = [s.r[2] for s in l.sites]
-	gplot(g, xs, ys)
-end
-
-# ╔═╡ d0e27739-0ed1-4a30-b69e-2db62ca539ee
-struct State
-	name::String
-	decay::Real
+	# annihilation
+	for k=1:p.nₛ
+		for m=1:p.nₛ
+			losses[loss_index] = rate_index
+			loss_index += 1
+			if p.dist[k, m]
+				# distinguishable
+				g = n[i, k] * n[i, m] * ann[k, m]
+			else
+				neff = n[i, k] + n[i, m]
+				g = ann[k, m] * (neff * (neff - 1)) / 2.0
+			end
+			rates[rate_index] = g
+			move_type[rate_index] = "ann"
+			rate_index += 1
+		end
+	end
+	return (rates, move_type, losses, emissive)
 end
 
 # ╔═╡ b1b44fd9-127d-4009-9cc1-993b357a6690
@@ -322,8 +271,8 @@ once a move's been picked, run it through Metropolis; if it's accepted,
 carry it out and increment the histogram iff 1.) an excitation's been lost
 and 2.) we are currently binning decays.
 """
-function mc_step!(l::Lattice, n::Matrix{Integer}, t::Real, dt::Real,
-	bin::Bool, counts::Matrix{Integer}, binwidth::Real)
+function mc_step!(l::Lattice, n::Matrix{Integer}, pulse::Vector{Real},
+	t::Real, dt::Real, bin::Bool, counts::Matrix{Integer}, binwidth::Real)
 	
 	# current intensity of pulse
 	if t < length(pulse) * dt
@@ -365,145 +314,14 @@ function mc_step!(l::Lattice, n::Matrix{Integer}, t::Real, dt::Real,
 	t += dt
 end
 
-# ╔═╡ 97eadd96-16a8-4b63-81a3-09cc59cecbf8
-# test the lattice generation
-begin
-	hex = LatticeParams([[0.0, 0.0]], 1.0, 6)
-	square = LatticeParams([[0.0, 0.0]], 1.0, 4)
-	line = LatticeParams([[0.0, 0.0]], 1.0, 2)
-	# honeycomb doesn't work atm. need to fix
-	honeycomb = LatticeParams([[0.0, 0.0], [0.0, -1.0]], 1.0, 6)
-	
-	lh2 = Protein(["BChl", "Car"],
-		["BChl_S", "BChl_T", "Car_T"],
-		2, 3, [1, 1, 2], 
-		[[false false true]; [false false true]; [true true false]],
-		[20, 4], # check this
-		[20, 4],
-		[10e-12, 0.0, 0.0],
-		[[1e-9 1e-7 0.0]; [0.0 1e-7 1e-7]; [0.0 0.0 1e-7]],
-		[[16e-9 16e-9 0.0]; [16e-9 16e-9 0.0]; [0.0 0.0 16e-9]],
-		[[1 1 0]; [1 1 0]; [0 0 3]],
-		[1e-20, 0.0, 0.0],
-		[true, false, false]
-	)
+# ╔═╡ 56f2bb72-cdf2-4722-bc1e-cc374b48be85
 
-	lattice = lattice_generation(hex, 200, [lh2], [1.0])
-	plot_lattice(lattice)
-
-	xsec = [1.0E-20, 0.0, 2E-20, 0.0, 0.0]
-	print(rand(xsec[xsec .> 0.0]))
-
-end
-
-# ╔═╡ 0afa851d-c9cc-4815-8b16-3197bf6670ba
-"""
-for an given protein and vector of current occupancies of each state,
-calculate the rates of each possible process and return a vector of them.
-"""
-function rates(n::Matrix{Integer}, i::Integer, 
-	p::Protein, l::Lattice, t::Real, pulse::Vector{Real})
-	"""
-	there are nₛ intra-complex transfers, nₛ annihilations, up to
-	coordination inter-complex hops, plus a generation and stimulated emission
-	rate for each species in the protein. Hence, nₛ (2nₛ + coordination + 2)
-	"""
-	rates = fill(0.0, p.nₛ * (2 * p.nₛ + l.params.coordination + 2))
-	move_type = fill("", p.nₛ * (2 * p.nₛ + l.params.coordination + 2))
-	# we want to know which of these rates corresponds to a loss in population
-	# - losses will give the indices of rates of these, then emissive tells us
-	# which of these are emissive.
-	losses = fill(0, p.nₛ * (p.nₛ + 2))
-	emissive = fill(false, p.nₛ * (p.nₛ + 2))
-	loss_index = 1
-	rate_index = 1
-	# current intensity of pulse
-	if t < length(pulse) * dt
-		ft = pulse[int(t / dt) + 1]
-	else 
-		ft = 0
-	end
-	# absorption
-	for k=1:p.nₛ
-		g = ft * xsec[k] * (p.n_tot[p.ps[k]] - n[i, k]) / p.n_tot[p.ps[k]]
-		rates[rate_index] = g
-		move_type[rate_index] = "gen"
-		rate_index += 1
-	end
-	# stimulated emission
-	for k=1:p.nₛ
-		g = ft * xsec[k] * n[i, k] / p.n_tot[p.ps[k]]
-		rates[rate_index] = g
-		move_type[rate_index] = "decay"
-		losses[loss_index] = rate_index
-		rate_index += 1
-		loss_index += 1
-	end
-	# hops
-	for k=1:p.nₛ
-		for j=1:l.params.coordination
-			if l.sites[i].nn[j] != 0
-				g = n[i, k] * p.hop[k]
-				# entropy factor - rate is reduced if hopping to a higher-occupied state
-				if n[i, k] < n[j, k]
-					g *= (n[i, k] * (p.n_thermal[p.ps[k]] - n[j, k])) / 
-				((n[j, k] + 1) * (p.n_thermal[p.ps[k]] - n[i, k] + 1))
-			
-				end
-			else
-				g = 0.0
-			end
-			rates[rate_index] = g
-			move_type[rate_index] = "hop"
-			rate_index += 1
-		end
-	end
-	# intra-complex	from state k to state m
-	for k=1:p.nₛ
-		for m=1:p.nₛ
-			g = n[i, k] * intra[k, m]
-			if k == m
-				losses[loss_index] = rate_index
-				move_type[rate_index] = "decay"
-				if p.emissive[k]
-					emissive[loss_index] = true
-				end
-				loss_index += 1
-			elseif k != m && n[i, m] == p.n_thermal[p.ps[m]]
-				# the final state is fully occupied - prevent transfer
-				g = 0.0
-			end
-			rates[rate_index] = g
-			move_type[rate_index] = "hop"
-			rate_index += 1
-		end
-	end
-	# annihilation
-	for k=1:p.nₛ
-		for m=1:p.nₛ
-			losses[loss_index] = rate_index
-			loss_index += 1
-			if p.dist[k, m]
-				# distinguishable
-				g = n[i, k] * n[i, m] * ann[k, m]
-			else
-				neff = n[i, k] + n[i, m]
-				g = ann[k, m] * (neff * (neff - 1)) / 2.0
-			end
-			rates[rate_index] = g
-			move_type[rate_index] = "ann"
-			rate_index += 1
-		end
-	end
-	return (rates, move_type, losses, emissive)
-end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 GraphPlot = "a2cc645c-3eea-5389-862e-a155d0052231"
 Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
-LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 
 [compat]
@@ -518,7 +336,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.10.3"
 manifest_format = "2.0"
-project_hash = "2f1e51918f611b1db585c2569f85ba4794558004"
+project_hash = "f4f2d5ad9fa2c3a2cf23e1f922b6e5da5be66107"
 
 [[deps.ArnoldiMethod]]
 deps = ["LinearAlgebra", "Random", "StaticArrays"]
@@ -847,24 +665,13 @@ version = "5.8.0+1"
 """
 
 # ╔═╡ Cell order:
-# ╠═8309ef8f-23d5-49a6-9cc2-cb210302c555
-# ╠═d536667a-0b7a-45ce-9471-5fe8d1b654d1
-# ╠═38ecc0bf-1fb3-4c5e-b7d9-5ec608277104
-# ╠═9f4eb629-f23f-4caa-a05b-c8618fce8b80
-# ╠═cd0a1835-cee5-43d5-b2f4-b09309363b4c
-# ╠═18eb45f4-c158-4080-a0e9-dcc5e01c479e
-# ╠═0fe4a898-cf3c-4ed5-911c-361211ea7c9a
-# ╠═19bbc9c5-18e8-43af-a307-90e133fe5200
-# ╠═2aaf887d-6984-4403-a8f6-bc1d36710899
-# ╠═f3955bc5-f06f-4956-b5aa-1f7f0cd29f19
-# ╠═29ce2bef-bd26-4d96-971f-fc44acb687eb
-# ╠═d4fb1c0c-5fd5-4fb9-809a-741c1952095b
-# ╠═d0e27739-0ed1-4a30-b69e-2db62ca539ee
+# ╠═948ebdca-a3ce-464e-98a3-637d1ea1a070
+# ╠═313a5a28-0fd6-4c25-a008-a6ec7108c705
 # ╠═0afa851d-c9cc-4815-8b16-3197bf6670ba
 # ╠═b1b44fd9-127d-4009-9cc1-993b357a6690
 # ╠═038c9e9c-5252-4801-9259-b669d42e2ccd
 # ╠═652428a5-4618-4986-bf87-cf7819b4359e
 # ╠═9fbd7017-7bbb-4057-a609-1b079afb4207
-# ╠═97eadd96-16a8-4b63-81a3-09cc59cecbf8
+# ╠═56f2bb72-cdf2-4722-bc1e-cc374b48be85
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

@@ -1,5 +1,3 @@
-module Proteins
-
 """
 - pigments = list of names of pigments
 - states = list of names of states on those pigments
@@ -48,21 +46,25 @@ struct Protein
     emissive::Vector{Bool}
 end
 
-# note - might be worth making Protein a mutable struct, and then
-# writing a function to change the carotenoid properties from this
-# and return a copy
-lh2 = Protein(["BChl", "Car"],
-        ["BChl_S", "BChl_T", "Car_T"],
-        2, 3, [1, 1, 2], 
-        [[false false true]; [false false true]; [true true false]],
-        [20, 4], # check this
-        [20, 4],
-        [10e-12, 0.0, 0.0],
-        [[1e-9 1e-7 0.0]; [0.0 1e-7 1e-7]; [0.0 0.0 1e-7]],
-        [[16e-9 16e-9 0.0]; [16e-9 16e-9 0.0]; [0.0 0.0 16e-9]],
-        [[1 1 0]; [1 1 0]; [0 0 3]],
-        [1e-20, 0.0, 0.0],
-        [true, false, false]
-)
-
+"""
+note - this will need changing so that we can mess with the
+carotenoid rates more easily.
+"""
+function get_protein(name)
+    if name == "lh2"
+        p = Protein(["BChl", "Car"],
+            ["BChl_S", "BChl_T", "Car_T"],
+            2, 3, [1, 1, 2], 
+            [[false false true]; [false false true]; [true true false]],
+            [20, 4], # check this
+            [20, 4],
+            [10e-12, 0.0, 0.0],
+            [[1e-9 1e-7 0.0]; [0.0 1e-7 1e-7]; [0.0 0.0 1e-7]],
+            [[16e-9 16e-9 0.0]; [16e-9 16e-9 0.0]; [0.0 0.0 16e-9]],
+            [[1 1 0]; [1 1 0]; [0 0 3]],
+            [1e-20, 0.0, 0.0],
+            [true, false, false]
+    )
+    end
+    return p
 end
