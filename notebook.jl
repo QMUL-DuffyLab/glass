@@ -16,122 +16,70 @@ begin
 	plot_lattice(l)
 end
 
-# ╔═╡ 0afa851d-c9cc-4815-8b16-3197bf6670ba
-"""
-for an given protein and vector of current occupancies of each state,
-calculate the rates of each possible process and return a vector of them.
-"""
-function rates(n::Matrix{Integer}, i::Integer, 
-	p::Protein, l::Lattice, t::Real, pulse::Vector{Real})
-	"""
-	there are nₛ intra-complex transfers, nₛ annihilations, up to
-	coordination inter-complex hops, plus a generation and stimulated emission
-	rate for each species in the protein. Hence, nₛ (2nₛ + coordination + 2)
-	"""
-	rates = fill(0.0, p.nₛ * (2 * p.nₛ + l.params.coordination + 2))
-	move_type = fill("", p.nₛ * (2 * p.nₛ + l.params.coordination + 2))
-	# we want to know which of these rates corresponds to a loss in population
-	# - losses will give the indices of rates of these, then emissive tells us
-	# which of these are emissive.
-	losses = fill(0, p.nₛ * (p.nₛ + 2))
-	emissive = fill(false, p.nₛ * (p.nₛ + 2))
-	loss_index = 1
-	rate_index = 1
-	# current intensity of pulse
-	if t < length(pulse) * dt
-		ft = pulse[int(t / dt) + 1]
-	else 
-		ft = 0
-	end
-	# absorption
-	for k=1:p.nₛ
-		g = ft * xsec[k] * (p.n_tot[p.ps[k]] - n[i, k]) / p.n_tot[p.ps[k]]
-		rates[rate_index] = g
-		move_type[rate_index] = "gen"
-		rate_index += 1
-	end
-	# stimulated emission
-	for k=1:p.nₛ
-		g = ft * xsec[k] * n[i, k] / p.n_tot[p.ps[k]]
-		rates[rate_index] = g
-		move_type[rate_index] = "decay"
-		losses[loss_index] = rate_index
-		rate_index += 1
-		loss_index += 1
-	end
-	# hops
-	for k=1:p.nₛ
-		for j=1:l.params.coordination
-			if l.sites[i].nn[j] != 0
-				g = n[i, k] * p.hop[k]
-				# entropy factor - rate is reduced if hopping to a higher-occupied state
-				if n[i, k] < n[j, k]
-					g *= (n[i, k] * (p.n_thermal[p.ps[k]] - n[j, k])) / 
-				((n[j, k] + 1) * (p.n_thermal[p.ps[k]] - n[i, k] + 1))
-			
-				end
-			else
-				g = 0.0
-			end
-			rates[rate_index] = g
-			move_type[rate_index] = "hop"
-			rate_index += 1
-		end
-	end
-	# intra-complex	from state k to state m
-	for k=1:p.nₛ
-		for m=1:p.nₛ
-			g = n[i, k] * intra[k, m]
-			if k == m
-				losses[loss_index] = rate_index
-				move_type[rate_index] = "decay"
-				if p.emissive[k]
-					emissive[loss_index] = true
-				end
-				loss_index += 1
-			elseif k != m && n[i, m] == p.n_thermal[p.ps[m]]
-				# the final state is fully occupied - prevent transfer
-				g = 0.0
-			end
-			rates[rate_index] = g
-			move_type[rate_index] = "hop"
-			rate_index += 1
-		end
-	end
-	# annihilation
-	for k=1:p.nₛ
-		for m=1:p.nₛ
-			losses[loss_index] = rate_index
-			loss_index += 1
-			if p.dist[k, m]
-				# distinguishable
-				g = n[i, k] * n[i, m] * ann[k, m]
-			else
-				neff = n[i, k] + n[i, m]
-				g = ann[k, m] * (neff * (neff - 1)) / 2.0
-			end
-			rates[rate_index] = g
-			move_type[rate_index] = "ann"
-			rate_index += 1
-		end
-	end
-	return (rates, move_type, losses, emissive)
-end
-
 # ╔═╡ b1b44fd9-127d-4009-9cc1-993b357a6690
+"""
+use some pretty simple criteria to determine whether a given type of move
+is currently possible on site i.
+the annihilation criteria's less trivial, not fixed it yet
+"""
 function possible_moves(l::Lattice, i::Integer, n::Matrix{Integer}, ft::Real)
 	move_types = []
-	if ft > 0
-		append!(move_types, ["gen", "se"])
+	# pulse has to be on and there has to be a state with a nonzero cross section
+	if ft > 0 && any(l.sites[i].p.xsec .> 0.0)
+		append!(move_types, ["gen"])
 	end
-	if sum(n[i, :] > 0)
+	# product of xsec and current population must be > 0 in order for a second
+	# photon to be absorbed and cause stimulated emission
+	if ft > 0 && any(l.sites[i].p.xsec .* n[i, :] .> 0.0)
+		append!(move_types, ["se"])
+	end
+	if any(n[i, :] .> 0)
 		append!(move_types, ["hop", "transfer", "decay"])
 	end
-	# this might require some more thought?
+	# this isn't always gonna work. need to think about it
 	if sum(n[i, :] > 1)
 		append!(move_types, "ann")
 	end
 	return move_types
+end
+
+# ╔═╡ 652428a5-4618-4986-bf87-cf7819b4359e
+""" 
+carry out an accepted move.
+- `n`: matrix of occupations of states on each site
+- `move_type`: string to tell us what the effect of the move is
+- `isi`: index of initial site
+- `ist`: index of initial state on `sites[isi]`
+- `fsi`: index of final site
+- `fst`: index of final state on `sites[fsi]`
+- `which_ann`: integer to tell us which of the states loses population.
+  Check which site this corresponds to and decrement that one.
+"""
+function move!(n, move_type, isi, ist, 
+	fsi, fst, which_ann)
+	if move_type == "hop"
+		n[isi, ist] -= 1
+		n[fsi, fst] += 1
+	elseif move_type == "decay"
+		n[isi, ist] -= 1
+	elseif move_type == "gen"
+		n[isi, ist] += 1
+	elseif move_type == "ann"
+		if which_ann == ist
+			n[isi, ist] -= 1
+		else
+			n[fsi, fst] -= 1
+		end
+	end
+end
+
+# ╔═╡ 5e300e0e-dab6-48df-a7dc-5a3389bdd485
+begin
+	xsec = [1., 0., 0.]
+	n = [0, 1, 1]
+	ann = [[1 1 1]; [0 2 0]; [0 0 3]]
+	wh = findall(n .> 0)
+	unique(collect(Iterators.product(wh, wh)))
 end
 
 # ╔═╡ 038c9e9c-5252-4801-9259-b669d42e2ccd
@@ -159,7 +107,6 @@ function propose_move(l::Lattice, i::Integer, n::Matrix{Int}, ft::Real)
 	
 	move_types = []
 	rate = 0.0
-	emissive = false
 	p = l.sites[i].p
 	loss_index = 0
 	isi = i
@@ -231,36 +178,6 @@ function propose_move(l::Lattice, i::Integer, n::Matrix{Int}, ft::Real)
 	return (rate, move_type, loss_index, isi, ist, fsi, fst)
 end
 
-# ╔═╡ 652428a5-4618-4986-bf87-cf7819b4359e
-""" 
-carry out an accepted move.
-- `n`: matrix of occupations of states on each site
-- `move_type`: string to tell us what the effect of the move is
-- `isi`: index of initial site
-- `ist`: index of initial state on `sites[isi]`
-- `fsi`: index of final site
-- `fst`: index of final state on `sites[fsi]`
-- `which_ann`: integer to tell us which of the states loses population.
-  Check which site this corresponds to and decrement that one.
-"""
-function move!(n, move_type, isi, ist, 
-	fsi, fst, which_ann)
-	if move_type == "hop"
-		n[isi, ist] -= 1
-		n[fsi, fst] += 1
-	elseif move_type == "decay"
-		n[isi, ist] -= 1
-	elseif move_type == "gen"
-		n[isi, ist] += 1
-	elseif move_type == "ann"
-		if which_ann == ist
-			n[isi, ist] -= 1
-		else
-			n[fsi, fst] -= 1
-		end
-	end
-end
-
 # ╔═╡ 9fbd7017-7bbb-4057-a609-1b079afb4207
 """
 one monte carlo step. 
@@ -313,9 +230,6 @@ function mc_step!(l::Lattice, n::Matrix{Integer}, pulse::Vector{Real},
 	end
 	t += dt
 end
-
-# ╔═╡ 56f2bb72-cdf2-4722-bc1e-cc374b48be85
-
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -667,11 +581,10 @@ version = "5.8.0+1"
 # ╔═╡ Cell order:
 # ╠═948ebdca-a3ce-464e-98a3-637d1ea1a070
 # ╠═313a5a28-0fd6-4c25-a008-a6ec7108c705
-# ╠═0afa851d-c9cc-4815-8b16-3197bf6670ba
 # ╠═b1b44fd9-127d-4009-9cc1-993b357a6690
 # ╠═038c9e9c-5252-4801-9259-b669d42e2ccd
 # ╠═652428a5-4618-4986-bf87-cf7819b4359e
 # ╠═9fbd7017-7bbb-4057-a609-1b079afb4207
-# ╠═56f2bb72-cdf2-4722-bc1e-cc374b48be85
+# ╠═5e300e0e-dab6-48df-a7dc-5a3389bdd485
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
