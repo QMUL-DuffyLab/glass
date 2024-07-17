@@ -30,6 +30,7 @@ should be reasonable. Also the treatment of absorption and stimulated emission
 might need to be fleshed out, depending on what we want to do going forward.
 """
 struct Protein
+    name::String
     pigments::Vector{String}
     states::Vector{String}
     nₚ::Integer
@@ -52,7 +53,8 @@ carotenoid rates more easily.
 """
 function get_protein(name)
     if name == "lh2"
-        p = Protein(["BChl", "Car"],
+        p = Protein("LH2",
+            ["BChl", "Car"],
             ["BChl_S", "BChl_T", "Car_T"],
             2, 3, [1, 1, 2], 
             [[false false true]; [false false true]; [true true false]],
@@ -64,6 +66,21 @@ function get_protein(name)
             [[1 1 0]; [1 1 0]; [0 0 3]],
             [1e-20, 0.0, 0.0],
             [true, false, false]
+    )
+    elseif name == "lhcii"
+        p = Protein("LHCII",
+            ["Chl", "Car"],
+            ["Chl_S", "Car_S"],
+            2, 2, [1, 2], 
+            [[false true]; [true false]],
+            [14, 1],
+            [5, 1],
+            [10e-12, 0.0],
+            [[4e-9 100.0e-12]; [0.0 10.0e-12]],
+            [[16e-12 0.0]; [0.0 0.0]],
+            [[1 0]; [0 1]],
+            [1e-20, 0.0],
+            [true, false]
     )
     end
     return p

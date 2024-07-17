@@ -6,15 +6,12 @@ using InteractiveUtils
 
 # ╔═╡ 948ebdca-a3ce-464e-98a3-637d1ea1a070
 begin
-	using Graphs, GraphPlot, StatsBase
+	using Graphs, GraphPlot, StatsBase, Colors
 	include("src/Lattices.jl")
 end
 
-# ╔═╡ 313a5a28-0fd6-4c25-a008-a6ec7108c705
-begin
-	l = lattice_generation(get_lattice("hex"), 200, [get_protein("lh2")], [1.0])
-	plot_lattice(l)
-end
+# ╔═╡ 3f795568-9894-4292-88ab-2a85c28f2c68
+using Distributed
 
 # ╔═╡ b1b44fd9-127d-4009-9cc1-993b357a6690
 """
@@ -43,45 +40,6 @@ function possible_moves(l::Lattice, i::Integer, n::Matrix{Integer}, ft::Real)
 	return move_types
 end
 
-# ╔═╡ 652428a5-4618-4986-bf87-cf7819b4359e
-""" 
-carry out an accepted move.
-- `n`: matrix of occupations of states on each site
-- `move_type`: string to tell us what the effect of the move is
-- `isi`: index of initial site
-- `ist`: index of initial state on `sites[isi]`
-- `fsi`: index of final site
-- `fst`: index of final state on `sites[fsi]`
-- `which_ann`: integer to tell us which of the states loses population.
-  Check which site this corresponds to and decrement that one.
-"""
-function move!(n, move_type, isi, ist, 
-	fsi, fst, which_ann)
-	if move_type == "hop"
-		n[isi, ist] -= 1
-		n[fsi, fst] += 1
-	elseif move_type == "decay"
-		n[isi, ist] -= 1
-	elseif move_type == "gen"
-		n[isi, ist] += 1
-	elseif move_type == "ann"
-		if which_ann == ist
-			n[isi, ist] -= 1
-		else
-			n[fsi, fst] -= 1
-		end
-	end
-end
-
-# ╔═╡ 5e300e0e-dab6-48df-a7dc-5a3389bdd485
-begin
-	xsec = [1., 0., 0.]
-	n = [0, 1, 1]
-	ann = [[1 1 1]; [0 2 0]; [0 0 3]]
-	wh = findall(n .> 0)
-	unique(collect(Iterators.product(wh, wh)))
-end
-
 # ╔═╡ 038c9e9c-5252-4801-9259-b669d42e2ccd
 """
 Based on the current state of the pulse and current populations,
@@ -107,8 +65,13 @@ function propose_move(l::Lattice, i::Integer, n::Matrix{Int}, ft::Real)
 	
 	move_types = []
 	rate = 0.0
-	p = l.sites[i].p
-	loss_index = 0
+	ip = l.sites[i].ip
+	protein = l.proteins[ip]
+	if ip > 1
+		loss_start_index = sum(p.nₛ * (p.nₛ + 2) for p in l.proteins[1:(ip - 1)])
+	else
+		loss_start_index = 0
+	end
 	isi = i
 	fsi = i
 	ist = 0
@@ -128,7 +91,7 @@ function propose_move(l::Lattice, i::Integer, n::Matrix{Int}, ft::Real)
 	elseif mt == "se"
 		s = rand(p.xsec[p.xsec .> 0.0])
 		rate = ft * p.xsec[s] * n[i, s] / p.n_tot[p.ps[s]]
-		loss_index = s
+		loss_index = lost_start_index + s
 		ist = s
 		fst = s
 	elseif mt == "hop"
@@ -157,25 +120,57 @@ function propose_move(l::Lattice, i::Integer, n::Matrix{Int}, ft::Real)
 		s = rand(1:p.nₛ)
 		rate = n[i, si] * intra[si, si]
 		emissive = p.emissive[s]
-		loss_index = s + p.nₛ
+		loss_index = loss_start_index + p.nₛ + s
 		ist = s
 		fst = s
 	elseif mt == "ann"
 		si = rand(1:p.nₛ)
 		sf = rand(1:p.nₛ)
-		if p.dist[si, sf]
+		# ordering ensures annihilation counting is commutative
+		pair = (si < sf) ? [si, sf] ? [sf, si]
+		if p.dist[pair]
 			# distinguishable
-			g = n[i, si] * n[i, sf] * ann[si, sf]
+			rate = n[i, pair[1]] * n[i, pair[2]] * ann[pair]
 		else
-			neff = n[i, si] + n[i, sf]
-			g = ann[si, sf] * (neff * (neff - 1)) / 2.0
+			neff = n[i, pair[1]] + n[i, pair[2]]
+			rate = ann[pair] * (neff * (neff - 1)) / 2.0
 		end
-		# we're gonna have one column for every possible annihilation pair
-		loss_index = sf + (2 + si) * p.nₛ
+		# one column for every combination
+		loss_index = loss_start_index + (2 + (pair[1] - 1)) * p.nₛ + pair[2]
 		ist = si
 		fst = sf
 	end
 	return (rate, move_type, loss_index, isi, ist, fsi, fst)
+end
+
+# ╔═╡ 652428a5-4618-4986-bf87-cf7819b4359e
+""" 
+carry out an accepted move.
+- `n`: matrix of occupations of states on each site
+- `move_type`: string to tell us what the effect of the move is
+- `isi`: index of initial site
+- `ist`: index of initial state on `sites[isi]`
+- `fsi`: index of final site
+- `fst`: index of final state on `sites[fsi]`
+- `which_ann`: integer to tell us which of the states loses population.
+  Check which site this corresponds to and decrement that one.
+"""
+function move!(n, move_type, isi, ist,
+	fsi, fst, which_ann)
+	if move_type == "hop"
+		n[isi, ist] -= 1
+		n[fsi, fst] += 1
+	elseif move_type == "decay"
+		n[isi, ist] -= 1
+	elseif move_type == "gen"
+		n[isi, ist] += 1
+	elseif move_type == "ann"
+		if which_ann == ist
+			n[isi, ist] -= 1
+		else
+			n[fsi, fst] -= 1
+		end
+	end
 end
 
 # ╔═╡ 9fbd7017-7bbb-4057-a609-1b079afb4207
@@ -231,14 +226,122 @@ function mc_step!(l::Lattice, n::Matrix{Integer}, pulse::Vector{Real},
 	t += dt
 end
 
+# ╔═╡ 59b19e4d-ec01-46b2-8585-e4a82f467f13
+struct Pulse
+	μ::Real
+	σ::Real
+	# unsure if we'll need this or not
+	λ::Real
+end
+
+# ╔═╡ 2640ff2c-003d-4831-a6d5-a2f0048bc96c
+struct SimulationParams
+	tmax::Real
+	dt1::Real
+	rep_rate::Real
+	dt2::Real
+	binwidth::Real
+	pulse::Pulse
+	maxcount::Integer
+	repeats::Integer
+end
+
+# ╔═╡ caa3d2dc-dae8-4ef7-8013-57e55a0b8b9d
+"""
+create the histogram array we'll bin counts into, the bin values themselves,
+and the labels for each column of the count array.
+this won't work with `propose_move` yet: we need to add a counter for which
+protein we're on.
+"""
+function generate_histogram(s::SimulationParams, l::Lattice)
+	n = ceil(Int, (s.tmax / s.binwidth) + 1)
+	bins = [(i - 1) * s.binwidth for i=1:n]
+	labels = []
+	emissive_columns = []
+	n_losses = 0
+	for p in l.proteins
+		for s1 in p.states
+			n_losses += 1
+			append!(labels, [p.name * "_se_" * s1])
+		end
+		for (i, s1) in enumerate(p.states)
+			n_losses += 1
+			append!(labels, [p.name * "_decay_" * s1])
+			if p.emissive[i]
+				append!(emissive_columns, [n_losses])
+			end
+		end
+		for s1 in p.states
+			for s2 in p.states
+				n_losses += 1
+				append!(labels, [p.name * "_ann_" * s1 * "_" * s2])
+			end
+		end
+	end
+	counts = zeros(Integer, n, n_losses)
+	return (bins, counts, labels, emissive_columns)
+end
+
+# ╔═╡ 724ebebb-540b-4a09-8d78-6339df8dfa5f
+begin
+	# various random testing bits
+	xsec = [1., 0., 0.]
+	n = [0, 1, 1]
+	ann = [[1 1 1]; [0 2 0]; [0 0 3]]
+	wh = findall(n .> 0)
+	unique(collect(Iterators.product(wh, wh)))
+	s = [10, 40, 37]
+	rho = [0.8, 0.1, 0.1]
+	sample([1:length(s);], Weights(rho), 50)
+
+	# testing the actual code
+	lattice = lattice_generation(get_lattice("hex"), 200, [get_protein("lh2"), get_protein("lhcii")], [0.5, 0.5])
+	plot_lattice(lattice)
+end
+
+# ╔═╡ bdf32183-e30b-40ac-b861-8461d1ebb8c2
+begin
+	pulse = Pulse(50e-12, 200e-12, 485e-9)
+	sim = SimulationParams(15e-9, 1e-12, 1e6, 1e-9, 25e-12, pulse, 10000, 5)
+	(bins, counts, labels, ec) = generate_histogram(sim, lattice)
+end
+
+# ╔═╡ e4163c69-0c72-4b02-8b17-0bc9f1a0ce57
+one_run()
+
+# ╔═╡ c67abef7-0a18-4a42-88fe-45a1b04b88fc
+using Random
+
+# ╔═╡ 79b36702-8c8d-46a5-8f39-4486380b9a0e
+function one_run()
+	# length(Sys.cpu_info()) looks awful but should give a reasonable
+	# guess of how many processes to start - if not you'll have to
+	# check how many cores your machine's got and put that in explicitly
+	t = addprocs(length(Sys.cpu_info()) - 1)
+
+	@everywhere begin
+		using Random
+		Random.seed!(myid())
+		pulse = Pulse(50e-12, 200e-12, 485e-9)
+		sim = SimulationParams(15e-9, 1e-12, 1e6, 1e-9, 25e-12, pulse, 10000, 5)
+		(bins, counts, labels, ec) = generate_histogram(sim, lattice)
+	end
+	
+	rmprocs(workers())
+end
+
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
+Colors = "5ae59095-9a9b-59fe-a467-6f913c188581"
+Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 GraphPlot = "a2cc645c-3eea-5389-862e-a155d0052231"
 Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 
 [compat]
+Colors = "~0.12.11"
 GraphPlot = "~0.6.0"
 Graphs = "~1.9.0"
 StatsBase = "~0.34.3"
@@ -250,7 +353,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.10.3"
 manifest_format = "2.0"
-project_hash = "f4f2d5ad9fa2c3a2cf23e1f922b6e5da5be66107"
+project_hash = "021557df86d641f870a293dec791dfb40999c8ba"
 
 [[deps.ArnoldiMethod]]
 deps = ["LinearAlgebra", "Random", "StaticArrays"]
@@ -580,11 +683,18 @@ version = "5.8.0+1"
 
 # ╔═╡ Cell order:
 # ╠═948ebdca-a3ce-464e-98a3-637d1ea1a070
-# ╠═313a5a28-0fd6-4c25-a008-a6ec7108c705
 # ╠═b1b44fd9-127d-4009-9cc1-993b357a6690
 # ╠═038c9e9c-5252-4801-9259-b669d42e2ccd
 # ╠═652428a5-4618-4986-bf87-cf7819b4359e
 # ╠═9fbd7017-7bbb-4057-a609-1b079afb4207
-# ╠═5e300e0e-dab6-48df-a7dc-5a3389bdd485
+# ╠═59b19e4d-ec01-46b2-8585-e4a82f467f13
+# ╠═2640ff2c-003d-4831-a6d5-a2f0048bc96c
+# ╠═caa3d2dc-dae8-4ef7-8013-57e55a0b8b9d
+# ╠═724ebebb-540b-4a09-8d78-6339df8dfa5f
+# ╠═bdf32183-e30b-40ac-b861-8461d1ebb8c2
+# ╠═3f795568-9894-4292-88ab-2a85c28f2c68
+# ╠═c67abef7-0a18-4a42-88fe-45a1b04b88fc
+# ╠═79b36702-8c8d-46a5-8f39-4486380b9a0e
+# ╠═e4163c69-0c72-4b02-8b17-0bc9f1a0ce57
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

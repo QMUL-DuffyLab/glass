@@ -1,6 +1,6 @@
 include("Proteins.jl")
 
-using LinearAlgebra, Graphs, GraphPlot, StatsBase
+using LinearAlgebra, Graphs, GraphPlot, StatsBase, Colors
 
 # can use this to define arbitrary lattices
 struct LatticeParams
@@ -11,7 +11,8 @@ end
 
 struct Site
     r::Vector{Real}
-    p::Protein
+    # which protein in Lattice.proteins is associated with this site
+    ip::Integer 
 end
 
 struct Lattice
@@ -19,6 +20,7 @@ struct Lattice
     sites::Vector{Site}
     A::Matrix{Integer}
     nn::Matrix{Integer}
+    proteins::Vector{Protein}
 end
 
 neighbours(p1, p2, spacing) = isapprox(norm(p1 - p2), spacing, atol=1e-6)
@@ -47,7 +49,7 @@ function lattice_generation(params::LatticeParams, nmax::Int,
     lv = lattice_vectors(params)
     nn = zeros(Integer, params.coordination, nmax)
     spacing = norm(lv[:, 1])
-    ps = sample(proteins, Weights(rho), nmax)
+    ps = sample([1:length(proteins);], Weights(rho), nmax)
     sites = Vector{Site}(undef, nmax)
     sites[1] = Site(params.basis[1], ps[1])
     adj = zeros(Integer, nmax, nmax)
@@ -83,14 +85,16 @@ function lattice_generation(params::LatticeParams, nmax::Int,
             end
         end
     end
-    Lattice(params, sites, adj, nn)
+    Lattice(params, sites, adj, nn, proteins)
 end
 
 function plot_lattice(l::Lattice)
     g = SimpleGraph(l.A)
+    c = distinguishable_colors(length(l.proteins))
     xs = [s.r[1] for s in l.sites]
     ys = [s.r[2] for s in l.sites]
-    gplot(g, xs, ys)
+    cs = [c[s.ip] for s in l.sites]
+    gplot(g, xs, ys, nodefillc=cs)
 end
 
 function get_lattice(name)
