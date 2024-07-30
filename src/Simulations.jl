@@ -8,6 +8,7 @@ struct PulseParams
     σ::Real
     # unsure if we'll need this or not
     λ::Real
+    f::Real
 end
 
 struct SimulationParams
@@ -21,11 +22,12 @@ struct SimulationParams
     repeats::Integer
 end
 
-function construct_pulse(p::PulseParams, dt::Real)
+function construct_pulse(p, dt)
     tmax = 2.0 * p.μ
     pulse = [(1.0 / (p.σ * sqrt(2.0 * pi))) * 
-             exp(-1.0 * ((i * dt) - p.μ)^2 / 
-                 (sqrt(2.0) * p.σ)^2) for i=1:ceil(tmax / dt)]
+             exp(-((i * dt) - p.μ)^2 / (sqrt(2.0) * p.σ)^2)
+             for i=1:ceil(tmax / dt)]
+    pulse *= p.f / sum(pulse)
 end
 
 """
@@ -36,20 +38,24 @@ the annihilation criteria's less trivial, not fixed it yet
 function possible_moves(l::Lattice, i::Integer, n, ft::Real)
     move_types = []
     # pulse has to be on and there has to be a state with a nonzero cross section
+    nₛ= l.proteins[l.sites[i].ip].nₛ
     xsecs = l.proteins[l.sites[i].ip].xsec
     if ft > 0 && any(xsecs .> 0.0)
         append!(move_types, ["gen"])
     end
     # product of xsec and current population must be > 0 in order for a second
     # photon to be absorbed and cause stimulated emission
-    if ft > 0 && any(xsecs .* n[i, :] .> 0.0)
+    # println("xsecs = ", xsecs)
+    # println("i = ", " protein = ",
+    #         l.proteins[l.sites[i].ip].name, " n = ", n[i, 1:nₛ])
+    if ft > 0 && any(xsecs .* n[i, 1:nₛ] .> 0.0)
         append!(move_types, ["se"])
     end
-    if any(n[i, :] .> 0)
+    if any(n[i, 1:nₛ] .> 0)
         append!(move_types, ["hop", "transfer", "decay"])
     end
     # this isn't always gonna work. need to think about it
-    if sum(n[i, :] > 1)
+    if sum(n[i, 1:nₛ]) > 1
         append!(move_types, "ann")
     end
     return move_types
@@ -77,15 +83,15 @@ Figure out how to do that.
 """
 function propose_move(l::Lattice, i::Integer, n, ft::Real)
     
-    move_types = []
     rate = 0.0
     ip = l.sites[i].ip
-    protein = l.proteins[ip]
+    p = l.proteins[ip]
     if ip > 1
         loss_start_index = sum(p.nₛ * (p.nₛ + 2) for p in l.proteins[1:(ip - 1)])
     else
         loss_start_index = 0
     end
+    loss_index = 0
     isi = i
     fsi = i
     ist = 0
@@ -98,18 +104,18 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
     # pick a type of move
     mt = move_types[rand(1:length(move_types))]
     if mt == "gen"
-        s = rand(p.xsec[p.xsec .> 0.0])
+        s = rand(findall(>(0), p.xsec))
         rate = ft * p.xsec[s] * (p.n_tot[p.ps[s]] - n[i, s]) / p.n_tot[p.ps[s]]
         ist = s
         fst = s
     elseif mt == "se"
-        s = rand(p.xsec[p.xsec .> 0.0])
+        s = rand(findall(>(0), p.xsec))
         rate = ft * p.xsec[s] * n[i, s] / p.n_tot[p.ps[s]]
-        loss_index = lost_start_index + s
+        loss_index = loss_start_index + s
         ist = s
         fst = s
     elseif mt == "hop"
-        s = rand(1:p.nₛ)
+        s = rand(findall(>(0), n[i, 1:nₛ]))
         nn = rand(l.sites[i].nn)
         rate = n[i, s] * p.hop[s]
         # entropy factor - rate is reduced if hopping to a higher-occupied state
@@ -121,7 +127,7 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
         fsi = nn
         fst = s
     elseif mt == "transfer"
-        si = rand(1:p.nₛ)
+        si = rand(findall(>(0), n[i, 1:nₛ]))
         sf = rand(1:p.nₛ)
         while sf == si
             # this would be a decay process - reroll
@@ -131,14 +137,19 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
         ist = si
         fst = sf
     elseif mt == "decay"
-        s = rand(1:p.nₛ)
+        si = rand(findall(>(0), n[i, 1:nₛ]))
         rate = n[i, si] * intra[si, si]
         emissive = p.emissive[s]
         loss_index = loss_start_index + p.nₛ + s
         ist = s
         fst = s
     elseif mt == "ann"
-        si = rand(1:p.nₛ)
+        """
+        this will probably work but be inefficient. the cleverer way
+        would be to pick one randomly, then select a second species
+        for which the corresponding annihilation rate > 0
+        """
+        si = rand(findall(>(0), n[i, 1:nₛ]))
         sf = rand(1:p.nₛ)
         # ordering ensures annihilation counting is commutative
         pair = (si < sf) ? [si, sf] : [sf, si]
@@ -154,7 +165,7 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
         ist = si
         fst = sf
     end
-    return (rate, move_type, loss_index, isi, ist, fsi, fst)
+    return (rate, mt, loss_index, isi, ist, fsi, fst)
 end
 
 """ 
@@ -199,8 +210,9 @@ function mc_step!(l::Lattice, n, pulse,
     t::Real, dt::Real, bin::Bool, counts::Matrix{Integer}, binwidth::Real)
     
     # current intensity of pulse
-    if t < length(pulse) * dt
-        ft = pulse[round(Int, t / dt) + 1]
+    pind = round(Int, t / dt) + 1
+    if pind <= length(pulse)
+        ft = pulse[pind]
     else 
         ft = 0
     end
@@ -221,9 +233,12 @@ function mc_step!(l::Lattice, n, pulse,
             end
             
             (rate, move_type, loss_index, isi, ist, fsi, fst) = propose_move(l, s, n, ft)
+            println(rate, " ", move_type, " ", loss_index, " ",
+                    isi, " ", ist, " ", fsi, " ", fst)
         
             # metropolis
             prob = rate * exp(-1.0 * rate * dt)
+            println("ft = ", ft, " prob = ", prob)
             if rand() < prob
                 # carry out the move - this changes population, which
                 # is why we have to check possible moves again above
@@ -235,7 +250,6 @@ function mc_step!(l::Lattice, n, pulse,
             end
         end
     end
-    t += dt
 end
 
 
@@ -291,18 +305,19 @@ function one_run()
 	lattice = lattice_generation(get_lattice("hex"), nmax,
 	        proteins, rho)
 	plot_lattice(lattice)
-        pulse_params = PulseParams(50e-12, 200e-12, 485e-9)
+        pulse_params = PulseParams(50e-12, 200e-12, 485e-9, 1e14)
         sim = SimulationParams(15e-9, 1e-12, 1e6, 1e-9, 25e-12,
                                pulse_params, 10000, 5)
         pulse = construct_pulse(pulse_params, sim.dt1)
         (bins, counts, labels, ec) = generate_histogram(sim, lattice)
-        n = zeros(Int, nmax, sum([p.nₛ for p in proteins]))
+        n = zeros(Int, nmax, maximum([p.nₛ for p in proteins]))
         t = 0.0
         while t < sim.tmax
             mc_step!(lattice, n, pulse, t, sim.dt1, true, counts, sim.binwidth)
-            if !(round(Int, t % sim.tmax / 100))
-                print("t = ", t)
-                print(counts)
+            t += sim.dt1
+            if round(Int, t % sim.tmax / 100) == 0
+                println("t = ", t)
+                println(maximum(counts))
             end
         end
 
