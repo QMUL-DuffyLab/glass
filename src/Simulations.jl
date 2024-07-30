@@ -115,8 +115,8 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
         ist = s
         fst = s
     elseif mt == "hop"
-        s = rand(findall(>(0), n[i, 1:nₛ]))
-        nn = rand(l.sites[i].nn)
+        s = rand(findall(>(0), n[i, 1:p.nₛ]))
+        nn = rand(l.nn[:, i])
         rate = n[i, s] * p.hop[s]
         # entropy factor - rate is reduced if hopping to a higher-occupied state
         if n[i, s] < n[nn, s]
@@ -127,18 +127,18 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
         fsi = nn
         fst = s
     elseif mt == "transfer"
-        si = rand(findall(>(0), n[i, 1:nₛ]))
+        si = rand(findall(>(0), n[i, 1:p.nₛ]))
         sf = rand(1:p.nₛ)
         while sf == si
             # this would be a decay process - reroll
             sf = rand(1:p.nₛ)
         end
-        rate = n[i, si] * intra[si, sf] # is this right? check
+        rate = n[i, si] * p.intra[si, sf] # is this right? check
         ist = si
         fst = sf
     elseif mt == "decay"
-        si = rand(findall(>(0), n[i, 1:nₛ]))
-        rate = n[i, si] * intra[si, si]
+        s = rand(findall(>(0), n[i, 1:p.nₛ]))
+        rate = n[i, s] * p.intra[s, s]
         emissive = p.emissive[s]
         loss_index = loss_start_index + p.nₛ + s
         ist = s
@@ -149,16 +149,16 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
         would be to pick one randomly, then select a second species
         for which the corresponding annihilation rate > 0
         """
-        si = rand(findall(>(0), n[i, 1:nₛ]))
+        si = rand(findall(>(0), n[i, 1:p.nₛ]))
         sf = rand(1:p.nₛ)
         # ordering ensures annihilation counting is commutative
         pair = (si < sf) ? [si, sf] : [sf, si]
         if p.dist[pair]
             # distinguishable
-            rate = n[i, pair[1]] * n[i, pair[2]] * ann[pair]
+            rate = n[i, pair[1]] * n[i, pair[2]] * p.ann[pair]
         else
             neff = n[i, pair[1]] + n[i, pair[2]]
-            rate = ann[pair] * (neff * (neff - 1)) / 2.0
+            rate = p.ann[pair] * (neff * (neff - 1)) / 2.0
         end
         # one column for every combination
         loss_index = loss_start_index + (2 + (pair[1] - 1)) * p.nₛ + pair[2]
@@ -242,10 +242,12 @@ function mc_step!(l::Lattice, n, pulse,
             if rand() < prob
                 # carry out the move - this changes population, which
                 # is why we have to check possible moves again above
-                move!(n, move_type, isi, ist, fsi, fst, l.sites[s].p.which_ann[ist, fst])
+                p = l.proteins[l.sites[s].ip]
+                move!(n, move_type, isi, ist, fsi, fst,
+                      p.which_ann[ist, fst])
                 if bin && loss_index > 0
                     # increment the correct column of the histogram
-                    counts[loss_index, floor(t / binwidth) + 1] += 1
+                    counts[loss_index, floor(Int, t / binwidth) + 1] += 1
                 end
             end
         end
@@ -305,7 +307,7 @@ function one_run()
 	lattice = lattice_generation(get_lattice("hex"), nmax,
 	        proteins, rho)
 	plot_lattice(lattice)
-        pulse_params = PulseParams(50e-12, 200e-12, 485e-9, 1e14)
+        pulse_params = PulseParams(200e-12, 50e-12, 485e-9, 1e14)
         sim = SimulationParams(15e-9, 1e-12, 1e6, 1e-9, 25e-12,
                                pulse_params, 10000, 5)
         pulse = construct_pulse(pulse_params, sim.dt1)
