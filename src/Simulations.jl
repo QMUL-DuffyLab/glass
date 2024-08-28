@@ -1,7 +1,7 @@
 module Simulations
 include("Lattices.jl")
 
-using Distributed, Random
+using Distributed, Random, DelimitedFiles
 
 struct PulseParams
     μ::Real
@@ -52,11 +52,16 @@ function possible_moves(l::Lattice, i::Integer, n, ft::Real)
         append!(move_types, ["se"])
     end
     if any(n[i, 1:nₛ] .> 0)
-        append!(move_types, ["hop", "transfer", "decay"])
+        append!(move_types, ["hop", "decay"])
+        if nₛ > 1
+            # can be cleverer about this too - there must be a state
+            # with available population and a nonzero transfer rate
+            append!(move_types, ["transfer"])
+        end
     end
     # this isn't always gonna work. need to think about it
     if sum(n[i, 1:nₛ]) > 1
-        append!(move_types, "ann")
+        append!(move_types, ["ann"])
     end
     return move_types
 end
@@ -103,6 +108,7 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
 
     # pick a type of move
     mt = move_types[rand(1:length(move_types))]
+    # println(mt)
     if mt == "gen"
         s = rand(findall(>(0), p.xsec))
         rate = ft * p.xsec[s] * (p.n_tot[p.ps[s]] - n[i, s]) / p.n_tot[p.ps[s]]
@@ -117,6 +123,9 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
     elseif mt == "hop"
         s = rand(findall(>(0), n[i, 1:p.nₛ]))
         nn = rand(l.nn[:, i])
+        while nn == 0
+            nn = rand(l.nn[:, i])
+        end
         rate = n[i, s] * p.hop[s]
         # entropy factor - rate is reduced if hopping to a higher-occupied state
         if n[i, s] < n[nn, s]
@@ -127,6 +136,7 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
         fsi = nn
         fst = s
     elseif mt == "transfer"
+        # 
         si = rand(findall(>(0), n[i, 1:p.nₛ]))
         sf = rand(1:p.nₛ)
         while sf == si
@@ -138,7 +148,17 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
         fst = sf
     elseif mt == "decay"
         s = rand(findall(>(0), n[i, 1:p.nₛ]))
+        # this currently fails if there's only one species
+        # because apparently A[1, :] is still a matrix for a 1x1
+        # matrix but not for larger than that. fucking julia, man
         rate = n[i, s] * p.intra[s, s]
+        # println("DECAY: ", n[i, s], " ", p.intra[s,s],
+        #         " typeof(s) = ", typeof(s),
+        #         " typeof(",p.intra,") = ", typeof(p.intra),
+        #         " typeof(",p.intra[s, :],") = ", typeof(p.intra[s, :]),
+        #         " typeof(",p.intra[:, s],") = ", typeof(p.intra[:, s]),
+        #         " typeof(",p.intra[s, s],") = ", typeof(p.intra[s, s]),
+        #        )
         emissive = p.emissive[s]
         loss_index = loss_start_index + p.nₛ + s
         ist = s
@@ -153,17 +173,23 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
         sf = rand(1:p.nₛ)
         # ordering ensures annihilation counting is commutative
         pair = (si < sf) ? [si, sf] : [sf, si]
-        if p.dist[pair]
+        # println("p.dist = ", p.dist, " type = ", typeof(p.dist),
+        #         " p.ann = ", p.ann, " type = ", typeof(p.ann),
+        #         " pair = ", pair, " p.dist[pair] = ", p.dist[pair],
+        #         " p.dist[pair expl] = ", p.dist[pair[1], pair[2]])
+        if p.dist[pair...]
             # distinguishable
-            rate = n[i, pair[1]] * n[i, pair[2]] * p.ann[pair]
+            rate = n[i, pair[1]] * n[i, pair[2]] * p.ann[pair...]
         else
             neff = n[i, pair[1]] + n[i, pair[2]]
-            rate = p.ann[pair] * (neff * (neff - 1)) / 2.0
+            rate = p.ann[pair...] * (neff * (neff - 1)) / 2.0
         end
         # one column for every combination
         loss_index = loss_start_index + (2 + (pair[1] - 1)) * p.nₛ + pair[2]
         ist = si
         fst = sf
+    else
+        println("shouldn't be here! mt = ", mt)
     end
     return (rate, mt, loss_index, isi, ist, fsi, fst)
 end
@@ -237,8 +263,8 @@ function mc_step!(l::Lattice, n, pulse,
                     isi, " ", ist, " ", fsi, " ", fst)
         
             # metropolis
-            prob = rate * exp(-1.0 * rate * dt)
-            println("ft = ", ft, " prob = ", prob)
+            prob = rate * dt * exp(-1.0 * rate * dt)
+            # println("ft = ", ft, " rate = ", rate, " prob = ", rate)
             if rand() < prob
                 # carry out the move - this changes population, which
                 # is why we have to check possible moves again above
@@ -286,7 +312,7 @@ function generate_histogram(s::SimulationParams, l::Lattice)
             end
         end
     end
-    counts = zeros(Integer, n, n_losses)
+    counts = zeros(Integer, n_losses, n)
     return (bins, counts, labels, emissive_columns)
 end
 
@@ -297,35 +323,43 @@ function one_run()
     # t = addprocs(length(Sys.cpu_info()) - 1)
 
     # @everywhere begin
-    begin
+    # begin
         # using Random
         # Random.seed!(myid())
-        Random.seed!()
-        nmax = 200
-        proteins = [get_protein("lh2"), get_protein("lhcii")]
-        rho = [0.5, 0.5]
-	lattice = lattice_generation(get_lattice("hex"), nmax,
-	        proteins, rho)
-	plot_lattice(lattice)
-        pulse_params = PulseParams(200e-12, 50e-12, 485e-9, 1e14)
-        sim = SimulationParams(15e-9, 1e-12, 1e6, 1e-9, 25e-12,
-                               pulse_params, 10000, 5)
-        pulse = construct_pulse(pulse_params, sim.dt1)
-        (bins, counts, labels, ec) = generate_histogram(sim, lattice)
-        n = zeros(Int, nmax, maximum([p.nₛ for p in proteins]))
+    Random.seed!()
+    nmax = 200
+    max_count = 1000
+    gen = 0
+    # proteins = [get_protein("lh2"), get_protein("lhcii")]
+    # rho = [0.5, 0.5]
+    proteins = [get_protein("chl")]
+    rho = [1.0]
+    lattice = lattice_generation(get_lattice("hex"), nmax,
+            proteins, rho)
+    plot_lattice(lattice)
+    pulse_params = PulseParams(200e-12, 50e-12, 485e-9, 1e14)
+    sim = SimulationParams(15e-9, 1e-12, 1e6, 1e-9, 25e-12,
+                           pulse_params, 10000, 5)
+    pulse = construct_pulse(pulse_params, sim.dt1)
+    (bins, counts, labels, ec) = generate_histogram(sim, lattice)
+    n = zeros(Int, nmax, maximum([p.nₛ for p in proteins]))
+    while maximum(counts) < max_count
         t = 0.0
         while t < sim.tmax
             mc_step!(lattice, n, pulse, t, sim.dt1, true, counts, sim.binwidth)
             t += sim.dt1
             if round(Int, t % sim.tmax / 100) == 0
-                println("t = ", t)
-                println(maximum(counts))
+                println("t = ", t, " max count = ", maximum(counts))
             end
         end
+        gen += 1
+    end
 
+    open("bincounts.txt", "w") do io
+        writedlm(io, hcat(bins, transpose(counts)))
     end
     
-    # rmprocs(workers())
+    (bins, counts, labels, ec)
 end
 
 end

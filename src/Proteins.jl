@@ -29,22 +29,22 @@ between complexes and transfer between states at the same time, which I think
 should be reasonable. Also the treatment of absorption and stimulated emission
 might need to be fleshed out, depending on what we want to do going forward.
 """
-struct Protein
-    name::String
-    pigments::Vector{String}
-    states::Vector{String}
-    nₚ::Integer
-    nₛ::Integer
-    ps::Vector{Int}
-    dist::Matrix{Bool}
-    n_tot::Vector{Integer}
-    n_thermal::Vector{Integer}
-    hop::Vector{Real}
-    intra::Matrix{Real}
-    ann::Matrix{Real}
-    which_ann::Matrix{Integer}
-    xsec::Vector{Real}
-    emissive::Vector{Bool}
+mutable struct Protein
+    name
+    pigments
+    states
+    nₚ
+    nₛ
+    ps
+    dist
+    n_tot
+    n_thermal
+    hop
+    intra
+    ann
+    which_ann
+    xsec
+    emissive
 end
 
 """
@@ -88,6 +88,21 @@ function get_protein(name)
             [2.74e-16, 0.0],
             [true, false]
     )
+    elseif name == "chl"
+        p = Protein("Chl",
+            ["Chl"],
+            ["Chl_S"],
+            1, 1, [1], 
+            false * ones(Bool, 1, 1),
+            [20],
+            [20],
+            [1.0/10e-12],
+            1.0/4e-9 * ones(1,1),
+            1.0/16e-12 * ones(1,1),
+            1 * ones(1,1),
+            [2.74e-13, 0.0],
+            [true]
+    )
     end
-    return p
+    p
 end
