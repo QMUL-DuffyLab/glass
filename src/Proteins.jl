@@ -100,7 +100,22 @@ function get_protein(name)
             1.0/4e-9 * ones(1,1),
             1.0/16e-12 * ones(1,1),
             1 * ones(1,1),
-            [2.74e-13, 0.0],
+            [2.74e-16, 0.0],
+            [true]
+    )
+    elseif name == "chl_det"
+        p = Protein("Chl",
+            ["Chl"],
+            ["Chl_S"],
+            1, 1, [1], 
+            false * ones(Bool, 1, 1),
+            [20],
+            [20],
+            [0.0],
+            1.0/4e-9 * ones(1,1),
+            1.0/16e-12 * ones(1,1),
+            1 * ones(1,1),
+            [2.74e-16, 0.0],
             [true]
     )
     end

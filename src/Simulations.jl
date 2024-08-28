@@ -27,7 +27,7 @@ function construct_pulse(p, dt)
     pulse = [(1.0 / (p.σ * sqrt(2.0 * pi))) * 
              exp(-((i * dt) - p.μ)^2 / (sqrt(2.0) * p.σ)^2)
              for i=1:ceil(tmax / dt)]
-    pulse *= p.f / sum(pulse)
+    pulse *= p.f
 end
 
 """
@@ -111,7 +111,8 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
     # println(mt)
     if mt == "gen"
         s = rand(findall(>(0), p.xsec))
-        rate = ft * p.xsec[s] * (p.n_tot[p.ps[s]] - n[i, s]) / p.n_tot[p.ps[s]]
+        # rate = ft * p.xsec[s] * (p.n_tot[p.ps[s]] - n[i, s]) / p.n_tot[p.ps[s]]
+        rate = ft * p.xsec[s] * (p.n_tot[p.ps[s]] - n[i, s])
         ist = s
         fst = s
     elseif mt == "se"
@@ -181,6 +182,9 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
             # distinguishable
             rate = n[i, pair[1]] * n[i, pair[2]] * p.ann[pair...]
         else
+            if pair[1] == pair[2] && n[i, pair[1]] == 1 && n[i, pair[2]] == 1
+                println("ILLEGAL ANNIHILATION")
+            end
             neff = n[i, pair[1]] + n[i, pair[2]]
             rate = p.ann[pair...] * (neff * (neff - 1)) / 2.0
         end
@@ -259,12 +263,11 @@ function mc_step!(l::Lattice, n, pulse,
             end
             
             (rate, move_type, loss_index, isi, ist, fsi, fst) = propose_move(l, s, n, ft)
-            println(rate, " ", move_type, " ", loss_index, " ",
-                    isi, " ", ist, " ", fsi, " ", fst)
         
             # metropolis
             prob = rate * dt * exp(-1.0 * rate * dt)
-            # println("ft = ", ft, " rate = ", rate, " prob = ", rate)
+            # println(ft, " ", rate, " ", prob, " ", move_type, " ", loss_index, " ",
+            #         isi, " ", ist, " ", fsi, " ", fst)
             if rand() < prob
                 # carry out the move - this changes population, which
                 # is why we have to check possible moves again above
@@ -329,33 +332,42 @@ function one_run()
     Random.seed!()
     nmax = 200
     max_count = 1000
-    gen = 0
+    rep = 1
     # proteins = [get_protein("lh2"), get_protein("lhcii")]
     # rho = [0.5, 0.5]
-    proteins = [get_protein("chl")]
+    proteins = [get_protein("chl_det")]
     rho = [1.0]
     lattice = lattice_generation(get_lattice("hex"), nmax,
             proteins, rho)
     plot_lattice(lattice)
     pulse_params = PulseParams(200e-12, 50e-12, 485e-9, 1e14)
     sim = SimulationParams(15e-9, 1e-12, 1e6, 1e-9, 25e-12,
-                           pulse_params, 10000, 5)
+                           pulse_params, 2000, 1)
     pulse = construct_pulse(pulse_params, sim.dt1)
+    println(pulse)
     (bins, counts, labels, ec) = generate_histogram(sim, lattice)
     n = zeros(Int, nmax, maximum([p.nₛ for p in proteins]))
-    while maximum(counts) < max_count
-        t = 0.0
-        while t < sim.tmax
-            mc_step!(lattice, n, pulse, t, sim.dt1, true, counts, sim.binwidth)
-            t += sim.dt1
-            if round(Int, t % sim.tmax / 100) == 0
-                println("t = ", t, " max count = ", maximum(counts))
+    run = 1
+    curr_maxcount = 0
+    while run <= sim.repeats
+        while curr_maxcount < sim.maxcount
+            t = 0.0
+            while t < sim.tmax
+                mc_step!(lattice, n, pulse, t, sim.dt1, true, counts, sim.binwidth)
+                t += sim.dt1
+                if t >= 2.0 * pulse_params.μ && sum(n) == 0
+                    break
+                end
             end
+            curr_maxcount = maximum(counts[ec..., :])
+            println("run ", run, " rep ", rep, " cmc = ", curr_maxcount)
+            rep += 1
+            # now up to rep rate do the other bit
         end
-        gen += 1
+        run += 1
     end
 
-    open("bincounts.txt", "w") do io
+    open("out/bincounts.txt", "w") do io
         writedlm(io, hcat(bins, transpose(counts)))
     end
     
