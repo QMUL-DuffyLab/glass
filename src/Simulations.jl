@@ -1,7 +1,7 @@
 module Simulations
 include("Lattices.jl")
 
-using Distributed, Random, DelimitedFiles
+using Plots, Distributed, Random, DelimitedFiles
 
 struct PulseParams
     μ::Real
@@ -26,7 +26,7 @@ function construct_pulse(p, dt)
     tmax = 2.0 * p.μ
     pulse = [(1.0 / (p.σ * sqrt(2.0 * pi))) * 
              exp(-((i * dt) - p.μ)^2 / (sqrt(2.0) * p.σ)^2)
-             for i=1:ceil(tmax / dt)]
+             for i=0:ceil(tmax / dt)]
     pulse *= p.f
 end
 
@@ -319,6 +319,19 @@ function generate_histogram(s::SimulationParams, l::Lattice)
     return (bins, counts, labels, emissive_columns)
 end
 
+function plot_counts(bins, counts, labels, maxcount, outfile)
+    scalefontsizes(1.5)
+    plot(bins, counts, label=permutedims(labels),
+         size=(1200,800), dpi=200)
+    ylims!(1, 2.0 * maxcount)
+    plot!(yscale=:log10)
+    xlabel!("time (s)")
+    ylabel!("counts")
+    # axis!(guidefontsize=28)
+    savefig(outfile)
+    scalefontsizes()
+end
+
 function one_run()
     # length(Sys.cpu_info()) looks awful but should give a reasonable
     # guess of how many processes to start - if not you'll have to
@@ -329,49 +342,91 @@ function one_run()
     # begin
         # using Random
         # Random.seed!(myid())
+
+    outdir = "out"
+    lattice_plot_file = joinpath(outdir, "lattice.svg")
+    pulse_file = joinpath(outdir, "pulse.txt")
+    bincount_path = joinpath(outdir, "bincounts")
+
     Random.seed!()
     nmax = 200
-    max_count = 1000
-    rep = 1
+    max_count = 200
+    rep = 2
     # proteins = [get_protein("lh2"), get_protein("lhcii")]
     # rho = [0.5, 0.5]
     proteins = [get_protein("chl_det")]
     rho = [1.0]
     lattice = lattice_generation(get_lattice("hex"), nmax,
             proteins, rho)
-    plot_lattice(lattice)
-    pulse_params = PulseParams(200e-12, 50e-12, 485e-9, 1e14)
+    plot_lattice(lattice, lattice_plot_file)
+    pulse_params = PulseParams(200e-12, 50e-12, 485e-9, 5e14)
     sim = SimulationParams(15e-9, 1e-12, 1e6, 1e-9, 25e-12,
-                           pulse_params, 2000, 1)
+                           pulse_params, 1000, 3)
+    # time from the end of one data collection period to the next pulse
+    pulse_interval = (1.0 / sim.rep_rate)
+
     pulse = construct_pulse(pulse_params, sim.dt1)
-    println(pulse)
-    (bins, counts, labels, ec) = generate_histogram(sim, lattice)
-    n = zeros(Int, nmax, maximum([p.nₛ for p in proteins]))
+    x = (0:ceil((2.0 * pulse_params.μ)/sim.dt1)) * sim.dt1
+
+    open(pulse_file, "w") do io
+        writedlm(io, hcat(x, pulse))
+    end
+
+    (bins, total_counts, labels, ec) = generate_histogram(sim, lattice)
+
     run = 1
-    curr_maxcount = 0
     while run <= sim.repeats
+        (bins, counts, labels, ec) = generate_histogram(sim, lattice)
+        n = zeros(Int, nmax, maximum([p.nₛ for p in proteins]))
+        curr_maxcount = 0
+        bincount_file = "$(bincount_path)_$(run).txt"
+
         while curr_maxcount < sim.maxcount
             t = 0.0
             while t < sim.tmax
-                mc_step!(lattice, n, pulse, t, sim.dt1, true, counts, sim.binwidth)
+                mc_step!(lattice, n, pulse, t, sim.dt1,
+                         true, counts, sim.binwidth)
                 t += sim.dt1
                 if t >= 2.0 * pulse_params.μ && sum(n) == 0
+                    break
+                end
+            end
+            # now up to rep rate do the other bit
+            while t < pulse_interval
+                mc_step!(lattice, n, pulse, t, sim.dt2,
+                         false, counts, sim.binwidth)
+                t += sim.dt2
+                if sum(n) == 0
                     break
                 end
             end
             curr_maxcount = maximum(counts[ec..., :])
             println("run ", run, " rep ", rep, " cmc = ", curr_maxcount)
             rep += 1
-            # now up to rep rate do the other bit
         end
+
+        open(bincount_file, "w") do io
+            # first column is always bins
+            write(io, join(["bins", labels...], '\t') * '\n')
+            writedlm(io, hcat(bins, transpose(counts)))
+        end
+        plot_counts(bins, transpose(counts), labels, sim.maxcount,
+                    splitext(bincount_file)[1] * ".png")
+        total_counts += counts
         run += 1
     end
 
-    open("out/bincounts.txt", "w") do io
-        writedlm(io, hcat(bins, transpose(counts)))
+    bincount_file = "$(bincount_path)_total.txt"
+    open(bincount_file, "w") do io
+        # first column is always bins
+        write(io, join(["bins", labels...], '\t') * '\n')
+        writedlm(io, hcat(bins, transpose(total_counts)))
     end
+    plot_counts(bins, transpose(total_counts), labels,
+                sim.repeats * sim.maxcount,
+                splitext(bincount_file)[1] * ".png")
     
-    (bins, counts, labels, ec)
+    (bins, total_counts, labels, ec)
 end
 
 end

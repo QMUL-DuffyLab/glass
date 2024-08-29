@@ -1,6 +1,6 @@
 include("Proteins.jl")
 
-using LinearAlgebra, Graphs, GraphPlot, StatsBase, Colors
+using LinearAlgebra, Graphs, GraphPlot, StatsBase, Colors, Cairo
 
 # can use this to define arbitrary lattices
 struct LatticeParams
@@ -88,13 +88,14 @@ function lattice_generation(params::LatticeParams, nmax::Int,
     Lattice(params, sites, adj, nn, proteins)
 end
 
-function plot_lattice(l::Lattice)
+function plot_lattice(l::Lattice, filename)
     g = SimpleGraph(l.A)
     c = distinguishable_colors(length(l.proteins))
     xs = [s.r[1] for s in l.sites]
     ys = [s.r[2] for s in l.sites]
     cs = [c[s.ip] for s in l.sites]
-    gplot(g, xs, ys, nodefillc=cs)
+    p = gplot(g, xs, ys, nodefillc=cs)
+    saveplot(p, filename)
 end
 
 function get_lattice(name)
