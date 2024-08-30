@@ -1,7 +1,7 @@
 module Simulations
 include("Lattices.jl")
 
-using Plots, Distributed, Random, DelimitedFiles
+using Random, DelimitedFiles, PyPlot
 
 struct PulseParams
     μ::Real
@@ -320,31 +320,24 @@ function generate_histogram(s::SimulationParams, l::Lattice)
 end
 
 function plot_counts(bins, counts, labels, maxcount, outfile)
-    scalefontsizes(1.5)
     # only plot columns with nonzero counts
     cols = [sum(c).>0 for c in eachcol(counts)]
     cplot = counts[:, cols]
     lplot = labels[cols]
-    plot(bins, cplot, label=permutedims(lplot),
-         size=(1200,800), dpi=200)
-    ylims!(1, 2.0 * maxcount)
-    plot!(yscale=:log10)
-    xlabel!("time (s)")
-    ylabel!("counts")
+    fig, ax = plt.subplots(figsize=(12,8))
+    for i = 1:sum(cols)
+        plot(bins, cplot[:, i], label=permutedims(lplot)[i])
+    end
+    ax.set_ylim(1, 2.0 * maxcount)
+    ax.set_yscale("log")
+    plt.grid(visible=true)
+    ax.legend()
+    ax.set_xlabel("time (s)")
+    ax.set_ylabel("counts")
     savefig(outfile)
-    scalefontsizes()
 end
 
 function run(seed=0)
-    # length(Sys.cpu_info()) looks awful but should give a reasonable
-    # guess of how many processes to start - if not you'll have to
-    # check how many cores your machine's got and put that in explicitly
-    # t = addprocs(length(Sys.cpu_info()) - 1)
-
-    # @everywhere begin
-    # begin
-        # using Random
-        # Random.seed!(myid())
 
     Random.seed!(seed)
     nmax = 200
@@ -387,7 +380,6 @@ function run(seed=0)
 
         while curr_maxcount < sim.maxcount
             t = 0.0
-            # println("start of pulse")
             while t < sim.tmax
                 mc_step!(lattice, n, pulse, t, sim.dt1,
                          true, counts, sim.binwidth)
@@ -397,7 +389,6 @@ function run(seed=0)
                 end
             end
             # now up to rep rate do the other bit
-            # println("start of dark period")
             while t < pulse_interval
                 mc_step!(lattice, n, pulse, t, sim.dt2,
                          false, counts, sim.binwidth)
@@ -424,7 +415,6 @@ function run(seed=0)
 
     bincount_file = "$(bincount_path)_total.txt"
     open(bincount_file, "w") do io
-        # first column is always bins
         write(io, join(["bins", labels...], '\t') * '\n')
         writedlm(io, hcat(bins, transpose(total_counts)))
     end
