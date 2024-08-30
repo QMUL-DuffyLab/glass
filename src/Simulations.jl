@@ -321,13 +321,16 @@ end
 
 function plot_counts(bins, counts, labels, maxcount, outfile)
     scalefontsizes(1.5)
-    plot(bins, counts, label=permutedims(labels),
+    # only plot columns with nonzero counts
+    cols = [sum(c).>0 for c in eachcol(counts)]
+    cplot = counts[:, cols]
+    lplot = labels[cols]
+    plot(bins, cplot, label=permutedims(lplot),
          size=(1200,800), dpi=200)
     ylims!(1, 2.0 * maxcount)
     plot!(yscale=:log10)
     xlabel!("time (s)")
     ylabel!("counts")
-    # axis!(guidefontsize=28)
     savefig(outfile)
     scalefontsizes()
 end
@@ -343,25 +346,27 @@ function one_run()
         # using Random
         # Random.seed!(myid())
 
-    outdir = "out"
-    lattice_plot_file = joinpath(outdir, "lattice.svg")
-    pulse_file = joinpath(outdir, "pulse.txt")
-    bincount_path = joinpath(outdir, "bincounts")
-
     Random.seed!()
     nmax = 200
     max_count = 200
     rep = 2
     # proteins = [get_protein("lh2"), get_protein("lhcii")]
     # rho = [0.5, 0.5]
-    proteins = [get_protein("chl_det")]
+    proteins = [get_protein("lh2")]
     rho = [1.0]
     lattice = lattice_generation(get_lattice("hex"), nmax,
             proteins, rho)
+
+    outdir = joinpath("out", join([p.name for p in proteins], "_"))
+    mkpath(outdir)
+    lattice_plot_file = joinpath(outdir, "lattice.svg")
+    pulse_file = joinpath(outdir, "pulse.txt")
+    bincount_path = joinpath(outdir, "bincounts")
+
     plot_lattice(lattice, lattice_plot_file)
     pulse_params = PulseParams(200e-12, 50e-12, 485e-9, 5e14)
     sim = SimulationParams(15e-9, 1e-12, 1e6, 1e-9, 25e-12,
-                           pulse_params, 1000, 3)
+                           pulse_params, 1000, 5)
     # time from the end of one data collection period to the next pulse
     pulse_interval = (1.0 / sim.rep_rate)
 
@@ -383,6 +388,7 @@ function one_run()
 
         while curr_maxcount < sim.maxcount
             t = 0.0
+            println("start of pulse")
             while t < sim.tmax
                 mc_step!(lattice, n, pulse, t, sim.dt1,
                          true, counts, sim.binwidth)
@@ -392,6 +398,7 @@ function one_run()
                 end
             end
             # now up to rep rate do the other bit
+            println("start of dark period")
             while t < pulse_interval
                 mc_step!(lattice, n, pulse, t, sim.dt2,
                          false, counts, sim.binwidth)
@@ -410,7 +417,7 @@ function one_run()
             write(io, join(["bins", labels...], '\t') * '\n')
             writedlm(io, hcat(bins, transpose(counts)))
         end
-        plot_counts(bins, transpose(counts), labels, sim.maxcount,
+        plot_counts(bins, transpose(counts), labels, maximum(counts),
                     splitext(bincount_file)[1] * ".png")
         total_counts += counts
         run += 1
@@ -423,7 +430,7 @@ function one_run()
         writedlm(io, hcat(bins, transpose(total_counts)))
     end
     plot_counts(bins, transpose(total_counts), labels,
-                sim.repeats * sim.maxcount,
+                maximum(total_counts),
                 splitext(bincount_file)[1] * ".png")
     
     (bins, total_counts, labels, ec)

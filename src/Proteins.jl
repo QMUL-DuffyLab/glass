@@ -47,6 +47,12 @@ mutable struct Protein
     emissive
 end
 
+function intersystem_rate(e_chl, e_car, k_init)
+    # detailed balance
+    # this is not correct but it's something like this, check
+    k = k_init * (e_chl / e_car)
+end
+
 """
 note - this will need changing so that we can mess with the
 carotenoid rates more easily.
@@ -56,20 +62,21 @@ function get_protein(name)
         p = Protein("LH2",
             ["BChl", "Car"],
             ["BChl_S", "BChl_T", "Car_T"],
-            2, 3, [1, 1, 2], 
+            2, 3, [1, 1, 2], # nₚ, nₛ, which pigment is each state on
+            # following line is distinguishability - Chl states aren't
             [[false false true]; [false false true]; [true true false]],
-            [20, 4], # check this
-            [20, 4],
-            [1.0/10e-12, 0.0, 0.0],
-            [[1.0/1e-9 1.0/1e-7 0.0];
-             [0.0 1.0/1e-7 1.0/1e-7];
+            [20, 4], # number of pigments total
+            [20, 4], # number of states accessible thermally
+            [1.0/10e-12, 0.0, 0.0], # intercomplex hopping rates
+            [[1.0/1e-9 1.0/15e-9 0.0]; # intracomplex transfer
+             [0.0 1.0/1e-7 1.0/15e-9]; # diagonal -> decay rate
              [0.0 0.0 1.0/1e-7]],
-            [[1.0/16e-9 1.0/16e-9 0.0];
+            [[1.0/16e-9 1.0/16e-9 0.0]; # annihilation rates
              [1.0/16e-9 1.0/16e-9 0.0];
              [0.0 0.0 1.0/16e-9]],
-            [[1 1 0]; [1 1 0]; [0 0 3]],
-            [1e-16, 0.0, 0.0],
-            [true, false, false]
+            [[1 1 0]; [1 1 0]; [0 0 3]], # which state gets annihilated
+            [1e-16, 0.0, 0.0], # cross-section of each state
+            [true, false, false] # which decays are emissive
     )
     elseif name == "lhcii"
         p = Protein("LHCII",
