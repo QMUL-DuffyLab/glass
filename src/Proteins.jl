@@ -69,12 +69,12 @@ function get_protein(name)
             [20, 4], # number of states accessible thermally
             [1.0/10e-12, 0.0, 0.0], # intercomplex hopping rates
             [[1.0/1e-9 1.0/15e-9 0.0]; # intracomplex transfer
-             [0.0 1.0/1e-7 1.0/15e-9]; # diagonal -> decay rate
+             [0.0 1.0/1e-7 1.0/1e-12]; # diagonal -> decay rate
              [0.0 0.0 1.0/1e-7]],
-            [[1.0/16e-9 1.0/16e-9 0.0]; # annihilation rates
-             [1.0/16e-9 1.0/16e-9 0.0];
-             [0.0 0.0 1.0/16e-9]],
-            [[1 1 0]; [1 1 0]; [0 0 3]], # which state gets annihilated
+            [[1.0/16e-12 1.0/16e-12 1.0/16e-12]; # annihilation rates
+             [1.0/16e-12 1.0/16e-12 0.0];
+             [1.0/16e-12 0.0 1.0/16e-12]],
+            [[1 1 1]; [1 1 0]; [1 0 3]], # which state gets annihilated
             [1e-16, 0.0, 0.0], # cross-section of each state
             [true, false, false] # which decays are emissive
     )

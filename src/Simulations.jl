@@ -335,7 +335,7 @@ function plot_counts(bins, counts, labels, maxcount, outfile)
     scalefontsizes()
 end
 
-function one_run()
+function run(seed=0)
     # length(Sys.cpu_info()) looks awful but should give a reasonable
     # guess of how many processes to start - if not you'll have to
     # check how many cores your machine's got and put that in explicitly
@@ -346,10 +346,8 @@ function one_run()
         # using Random
         # Random.seed!(myid())
 
-    Random.seed!()
+    Random.seed!(seed)
     nmax = 200
-    max_count = 200
-    rep = 2
     # proteins = [get_protein("lh2"), get_protein("lhcii")]
     # rho = [0.5, 0.5]
     proteins = [get_protein("lh2")]
@@ -361,10 +359,10 @@ function one_run()
     mkpath(outdir)
     lattice_plot_file = joinpath(outdir, "lattice.svg")
     pulse_file = joinpath(outdir, "pulse.txt")
-    bincount_path = joinpath(outdir, "bincounts")
+    bincount_path = joinpath(outdir, "bincounts_$(seed)_")
 
     plot_lattice(lattice, lattice_plot_file)
-    pulse_params = PulseParams(200e-12, 50e-12, 485e-9, 5e14)
+    pulse_params = PulseParams(200e-12, 50e-12, 485e-9, 1e14)
     sim = SimulationParams(15e-9, 1e-12, 1e6, 1e-9, 25e-12,
                            pulse_params, 1000, 5)
     # time from the end of one data collection period to the next pulse
@@ -381,6 +379,7 @@ function one_run()
 
     run = 1
     while run <= sim.repeats
+        rep = 1
         (bins, counts, labels, ec) = generate_histogram(sim, lattice)
         n = zeros(Int, nmax, maximum([p.nₛ for p in proteins]))
         curr_maxcount = 0
@@ -388,7 +387,7 @@ function one_run()
 
         while curr_maxcount < sim.maxcount
             t = 0.0
-            println("start of pulse")
+            # println("start of pulse")
             while t < sim.tmax
                 mc_step!(lattice, n, pulse, t, sim.dt1,
                          true, counts, sim.binwidth)
@@ -398,7 +397,7 @@ function one_run()
                 end
             end
             # now up to rep rate do the other bit
-            println("start of dark period")
+            # println("start of dark period")
             while t < pulse_interval
                 mc_step!(lattice, n, pulse, t, sim.dt2,
                          false, counts, sim.binwidth)
@@ -408,7 +407,7 @@ function one_run()
                 end
             end
             curr_maxcount = maximum(counts[ec..., :])
-            println("run ", run, " rep ", rep, " cmc = ", curr_maxcount)
+            println("proc ", seed, " run ", run, " rep ", rep, " cmc = ", curr_maxcount)
             rep += 1
         end
 
