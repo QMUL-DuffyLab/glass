@@ -65,8 +65,8 @@ function get_protein(name)
             2, 3, [1, 1, 2], # nₚ, nₛ, which pigment is each state on
             # following line is distinguishability - Chl states aren't
             [[false false true]; [false false true]; [true true false]],
-            [20, 4], # number of pigments total
-            [20, 4], # number of states accessible thermally
+            [27, 9], # number of pigments total
+            [18, 9], # number of states accessible thermally
             [1.0/10e-12, 0.0, 0.0], # intercomplex hopping rates
             [[1.0/1e-9 1.0/15e-9 0.0]; # intracomplex transfer
              [0.0 1.0/1e-7 1.0/1e-12]; # diagonal -> decay rate
@@ -75,7 +75,7 @@ function get_protein(name)
              [1.0/16e-12 1.0/16e-12 0.0];
              [1.0/16e-12 0.0 1.0/16e-12]],
             [[1 1 1]; [1 1 0]; [1 0 3]], # which state gets annihilated
-            [1e-16, 0.0, 0.0], # cross-section of each state
+            [(1.0/27.0)*1e-14, 0.0, 0.0], # cross-section of each state
             [true, false, false] # which decays are emissive
     )
     elseif name == "lhcii"
@@ -127,4 +127,50 @@ function get_protein(name)
     )
     end
     p
+end
+
+"""
+convenience function to change LH2 rates based on carotenoid energy.
+does a quick detailed balance calculation to get the forward and backward
+rates of transfer between the chlorophyll and carotenoid triplets.
+assumes (among other things) that BChl singlets can annihilate with
+themselves, BChl triplets and Car triplets, but BChl triplets cannot
+annihilate with Car triplets. It's possible to change various other
+parameters here - hopefully it's clear what they all are.
+singlet xsec here taken from σ(800) in paper, which i assume is for
+one LH2 complex, divided by the number of BChls. rough estimate
+"""
+function make_lh2(t_t_time;
+    hop_time = 10.0e-12,
+    isc_time = 18.6e-9,
+    ann_time = 16.0e-12,
+    bchls_decay = 1.14e-9,
+    bchlt_decay = 5.5e-6,
+    cart_decay = 5.5e-6,
+    singlet_xsec = 1e-14 * (1.0 / 27.0)
+    )
+    hop_rates = 1.0 ./ [hop_time, 0., 0.]
+    intra_rates = (1.0 ./ 
+                   [[bchls_decay isc_time 0.];
+                    [0.0 bchlt_decay t_t_time]; 
+                    [0.0 0.0 cart_decay]])
+    ann_rates = (1.0 ./ 
+                   [[ann_time ann_time ann_time];
+                    [ann_time ann_time 0.0]; 
+                    [0.0 0.0 ann_time]])
+    p = Protein("LH2",
+        ["BChl", "Car"],
+        ["BChl_S", "BChl_T", "Car_T"],
+        2, 3, [1, 1, 2], # nₚ, nₛ, which pigment is each state on
+        # following line is distinguishability - Chl states aren't
+        [[false false true]; [false false true]; [true true false]],
+        [27, 9], # number of pigments total
+        [18, 9], # number of states accessible thermally
+        hop_rates,
+        intra_rates,
+        ann_rates,
+        [[1 1 1]; [1 1 0]; [1 0 3]], # which state gets annihilated
+        [singlet_xsec, 0.0, 0.0], # cross-section of each state
+        [true, false, false] # which decays are emissive
+    )
 end

@@ -149,9 +149,6 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
         fst = sf
     elseif mt == "decay"
         s = rand(findall(>(0), n[i, 1:p.nₛ]))
-        # this currently fails if there's only one species
-        # because apparently A[1, :] is still a matrix for a 1x1
-        # matrix but not for larger than that. fucking julia, man
         rate = n[i, s] * p.intra[s, s]
         # println("DECAY: ", n[i, s], " ", p.intra[s,s],
         #         " typeof(s) = ", typeof(s),
@@ -171,7 +168,8 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
         for which the corresponding annihilation rate > 0
         """
         si = rand(findall(>(0), n[i, 1:p.nₛ]))
-        sf = rand(1:p.nₛ)
+        sf = rand(findall(>(0), n[i, 1:p.nₛ]))
+        # sf = rand(1:p.nₛ)
         # ordering ensures annihilation counting is commutative
         pair = (si < sf) ? [si, sf] : [sf, si]
         # println("p.dist = ", p.dist, " type = ", typeof(p.dist),
@@ -182,9 +180,6 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
             # distinguishable
             rate = n[i, pair[1]] * n[i, pair[2]] * p.ann[pair...]
         else
-            if pair[1] == pair[2] && n[i, pair[1]] == 1 && n[i, pair[2]] == 1
-                println("ILLEGAL ANNIHILATION")
-            end
             neff = n[i, pair[1]] + n[i, pair[2]]
             rate = p.ann[pair...] * (neff * (neff - 1)) / 2.0
         end
@@ -214,6 +209,9 @@ function move!(n, move_type, isi, ist,
     if move_type == "hop"
         n[isi, ist] -= 1
         n[fsi, fst] += 1
+    elseif move_type == "transfer"
+        n[isi, ist] -= 1
+        n[fsi, fst] += 1
     elseif move_type == "decay"
         n[isi, ist] -= 1
     elseif move_type == "gen"
@@ -224,6 +222,17 @@ function move!(n, move_type, isi, ist,
         else
             n[fsi, fst] -= 1
         end
+    end
+    if n[isi, ist] < 0
+        println("n[$(isi), $(ist)] = $(n[isi, ist])")
+        println("$(move_type), [fsi, fst] = $(fsi), $(fst)")
+        throw(DomainError(n[isi, ist],
+              "populations must be non-negative"))
+    elseif n[fsi, fst] < 0
+        println("n[$(fsi), $(fst)] = $(n[fsi, fst])")
+        println("$(move_type), [isi, ist] = $(isi), $(ist)")
+        throw(DomainError(n[fsi, fst],
+              "populations must be non-negative"))
     end
 end
 
@@ -341,23 +350,33 @@ function run(seed=0)
 
     Random.seed!(seed)
     nmax = 200
-    # proteins = [get_protein("lh2"), get_protein("lhcii")]
-    # rho = [0.5, 0.5]
-    proteins = [get_protein("lh2")]
+    # transfer times to Car triplet for different Cars
+    t_t_rates = [0.0, 1e-9, 100e-12, 1e-12]
+    # lengths of the corresponding carotenoids
+    car_lengths = [7, 9, 10, 13]
+    car_index = 2
+    proteins = [make_lh2(t_t_rates[car_index])]
     rho = [1.0]
     lattice = lattice_generation(get_lattice("hex"), nmax,
             proteins, rho)
 
-    outdir = joinpath("out", join([p.name for p in proteins], "_"))
+    fluences = vec([1.0, 3.0] .* [1e11 1e12 1e13 1e14])
+    rep_rates = [26.6e6, 10e6, 4e6, 1.5e6, 0.6e6, 0.2e6]
+
+    pulse_params = PulseParams(200e-12, 50e-12, 800e-9, fluences[1])
+    sim = SimulationParams(15e-9, 1e-12, rep_rates[1],
+                           1e-9, 25e-12, pulse_params, 1000, 5)
+
+    protein_names = [p.name for p in proteins]
+    # output directory will be "out/LH2_(rep_rate)_(fluence)_(car_length)"
+    outdir = joinpath("out",
+        join([protein_names..., sim.rep_rate/1e6, "MHz",
+              pulse_params.f, "N", car_lengths[car_index]], "_"))
     mkpath(outdir)
     lattice_plot_file = joinpath(outdir, "lattice.svg")
     pulse_file = joinpath(outdir, "pulse.txt")
     bincount_path = joinpath(outdir, "bincounts_$(seed)_")
 
-    plot_lattice(lattice, lattice_plot_file)
-    pulse_params = PulseParams(200e-12, 50e-12, 485e-9, 1e14)
-    sim = SimulationParams(15e-9, 1e-12, 1e6, 1e-9, 25e-12,
-                           pulse_params, 1000, 5)
     # time from the end of one data collection period to the next pulse
     pulse_interval = (1.0 / sim.rep_rate)
 
@@ -367,6 +386,8 @@ function run(seed=0)
     open(pulse_file, "w") do io
         writedlm(io, hcat(x, pulse))
     end
+
+    plot_lattice(lattice, lattice_plot_file)
 
     (bins, total_counts, labels, ec) = generate_histogram(sim, lattice)
 
@@ -387,6 +408,13 @@ function run(seed=0)
                 if t >= 2.0 * pulse_params.μ && sum(n) == 0
                     break
                 end
+            end
+            println("after rep $(rep) pulse 
+                    sum(n_bs) = $(sum(n[:, 1]))
+                    sum(n_bt) = $(sum(n[:, 2]))
+                    sum(n_ct) = $(sum(n[:, 3]))")
+            if any(n .< 0)
+                println(n)
             end
             # now up to rep rate do the other bit
             while t < pulse_interval
