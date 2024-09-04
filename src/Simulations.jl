@@ -432,7 +432,11 @@ function run(seed=0)
 
         open(bincount_file, "w") do io
             # first column is always bins
+            # first row labels, second row emissive
             write(io, join(["bins", labels...], '\t') * '\n')
+            emissive = [false for l in labels]
+            emissive[ec...] = true
+            write(io, join([false, emissive...], '\t') * '\n')
             writedlm(io, hcat(bins, transpose(counts)))
         end
         plot_counts(bins, transpose(counts), labels, maximum(counts),
