@@ -22,13 +22,15 @@ struct SimulationParams
     repeats::Int
 end
 
+trapz(A) = sum(A) + (A[begin] + A[end]) / 2.0
+trapz(A, dx) = dx * trapz(A)
+
 function construct_pulse(p, dt)
     tmax = 2.0 * p.μ
     pulse = [(1.0 / (p.σ * sqrt(2.0 * pi))) * 
              exp(-((i * dt) - p.μ)^2 / (sqrt(2.0) * p.σ)^2)
              for i=0:ceil(tmax / dt)]
-    integral = dt * (sum(pulse) + (pulse[end] + pulse[begin]) / 2.0)
-    pulse .*= (p.f / integral)
+    pulse .*= (p.f / trapz(pulse, dt))
 end
 
 """
@@ -247,17 +249,20 @@ attempt one of each type of possible move on each site on average;
 once a move's been picked, run it through Metropolis; if it's accepted,
 carry it out and increment the histogram iff 1.) an excitation's been lost
 and 2.) we are currently binning decays.
+NB: currently i pass pulse_params to check time but it'd be easier
+to just send a 0 or an array of zeroes so we don't have to do that check
 """
-function mc_step!(l::Lattice, n, pulse,
+function mc_step!(l::Lattice, n, pulse, pulse_params,
     t::Real, dt::Real, bin::Bool, counts::Matrix{Integer},
     binwidth::Real, print_debug::Bool)
     
     # current intensity of pulse
-    pind = round(Int, t / dt) + 1
-    if pind <= length(pulse)
-        ft = pulse[pind]
-    else 
-        ft = zero(eltype(pulse))
+    ft = zero(eltype(pulse))
+    if t <= 2.0 * pulse_params.μ
+        pind = round(Int, t / dt) + 1
+        if pind <= length(pulse)
+            ft = pulse[pind]
+        end
     end
     
     # pick each site once on average
@@ -283,12 +288,15 @@ function mc_step!(l::Lattice, n, pulse,
                 # carry out the move - this changes population, which
                 # is why we have to check possible moves again above
                 if print_debug
-                    println(ft, " ", rate, " ", prob, " ",
-                            move_type, " ", loss_index, " ",
-                            isi, " ", ist, " ", fsi, " ", fst,
-                            "n[isi, ist] = $(n[isi, ist])",
-                            " n[fsi, fst] = $(n[fsi, fst])",
-                           )
+                    if move_type == "gen"
+                        println(
+                                "t = $(t), dt = $(dt), bin = $(bin), ",
+                                "ft = $(ft), rate = $(rate) ",
+                                "prob = $(prob), ",
+                                "n[isi, ist] = $(n[isi, ist])",
+                                " n[fsi, fst] = $(n[fsi, fst])",
+                               )
+                    end
                 end
                 p = l.proteins[l.sites[s].ip]
                 move!(n, move_type, isi, ist, fsi, fst,
@@ -385,7 +393,7 @@ function one_run(sim, lattice, seed, hist_file)
     while curr_maxcount < sim.maxcount
         t = 0.0
         while t < sim.tmax
-            mc_step!(lattice, n, pulse, t, sim.dt1,
+            mc_step!(lattice, n, pulse, sim.pulse_params, t, sim.dt1,
                      true, counts, sim.binwidth, print_debug)
             t += sim.dt1
             if t >= 2.0 * sim.pulse_params.μ && sum(n) == 0
@@ -403,7 +411,7 @@ function one_run(sim, lattice, seed, hist_file)
         println("sums = $(sums)")
         # now up to rep rate do the other bit
         while t < pulse_interval
-            mc_step!(lattice, n, pulse, t, sim.dt2,
+            mc_step!(lattice, n, pulse, sim.pulse_params, t, sim.dt2,
                      false, counts, sim.binwidth, print_debug)
             t += sim.dt2
             if sum(n) == 0
