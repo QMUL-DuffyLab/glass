@@ -18,8 +18,8 @@ end
 struct Lattice
     params::LatticeParams
     sites::Vector{Site}
-    A::Matrix{Integer}
-    nn::Matrix{Integer}
+    A::Matrix{Int32}
+    nn::Matrix{Int32}
     proteins::Vector{Protein}
 end
 

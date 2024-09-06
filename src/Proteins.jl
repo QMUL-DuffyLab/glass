@@ -147,7 +147,7 @@ function make_lh2(t_t_time;
     bchls_decay = 1.14e-9,
     bchlt_decay = 5.5e-6,
     cart_decay = 5.5e-6,
-    singlet_xsec = 1e-14 * (1.0 / 27.0)
+    xsec = 1e-14
     )
     hop_rates = 1.0 ./ [hop_time, 0., 0.]
     intra_rates = (1.0 ./ 
@@ -170,7 +170,7 @@ function make_lh2(t_t_time;
         intra_rates,
         ann_rates,
         [[1 1 1]; [1 1 0]; [1 0 3]], # which state gets annihilated
-        [singlet_xsec, 0.0, 0.0], # cross-section of each state
+        [xsec, 0.0, 0.0], # cross-section of each state
         [true, false, false] # which decays are emissive
     )
 end

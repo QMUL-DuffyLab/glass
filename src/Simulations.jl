@@ -4,22 +4,22 @@ include("Lattices.jl")
 using Random, DelimitedFiles, PyPlot
 
 struct PulseParams
-    μ::Real
-    σ::Real
+    μ::Float64
+    σ::Float64
     # unsure if we'll need this or not
-    λ::Real
-    f::Real
+    λ::Float64
+    f::Float64
 end
 
 struct SimulationParams
-    tmax::Real
-    dt1::Real
-    rep_rate::Real
-    dt2::Real
-    binwidth::Real
+    tmax::Float64
+    dt1::Float64
+    rep_rate::Float64
+    dt2::Float64
+    binwidth::Float64
     pulse_params::PulseParams
-    maxcount::Integer
-    repeats::Integer
+    maxcount::Int
+    repeats::Int
 end
 
 function construct_pulse(p, dt)
@@ -27,7 +27,8 @@ function construct_pulse(p, dt)
     pulse = [(1.0 / (p.σ * sqrt(2.0 * pi))) * 
              exp(-((i * dt) - p.μ)^2 / (sqrt(2.0) * p.σ)^2)
              for i=0:ceil(tmax / dt)]
-    pulse *= p.f
+    integral = dt * (sum(pulse) + (pulse[end] + pulse[begin]) / 2.0)
+    pulse .*= (p.f / integral)
 end
 
 """
@@ -35,12 +36,12 @@ use some pretty simple criteria to determine whether a given type of move
 is currently possible on site i.
 the annihilation criteria's less trivial, not fixed it yet
 """
-function possible_moves(l::Lattice, i::Integer, n, ft::Real)
+function possible_moves(l::Lattice, i::Int, n, ft::Float64)
     move_types = []
     # pulse has to be on and there has to be a state with a nonzero cross section
     nₛ= l.proteins[l.sites[i].ip].nₛ
     xsecs = l.proteins[l.sites[i].ip].xsec
-    if ft > 0 && any(xsecs .> 0.0)
+    if ft > zero(ft) && any(xsecs .> 0.0)
         append!(move_types, ["gen"])
     end
     # product of xsec and current population must be > 0 in order for a second
@@ -48,7 +49,7 @@ function possible_moves(l::Lattice, i::Integer, n, ft::Real)
     # println("xsecs = ", xsecs)
     # println("i = ", " protein = ",
     #         l.proteins[l.sites[i].ip].name, " n = ", n[i, 1:nₛ])
-    if ft > 0 && any(xsecs .* n[i, 1:nₛ] .> 0.0)
+    if ft > zero(ft) && any(xsecs .* n[i, 1:nₛ] .> 0.0)
         append!(move_types, ["se"])
     end
     if any(n[i, 1:nₛ] .> 0)
@@ -86,13 +87,14 @@ then we can just index back into that.
 NB: this can be sped up by only picking states with nonzero populations.
 Figure out how to do that.
 """
-function propose_move(l::Lattice, i::Integer, n, ft::Real)
+function propose_move(l::Lattice, i::Int, n, ft::Float64)
     
     rate = 0.0
     ip = l.sites[i].ip
     p = l.proteins[ip]
     if ip > 1
-        loss_start_index = sum(p.nₛ * (p.nₛ + 2) for p in l.proteins[1:(ip - 1)])
+        loss_start_index = sum(p.nₛ * (p.nₛ + 2)
+                               for p in l.proteins[1:(ip - 1)])
     else
         loss_start_index = 0
     end
@@ -111,8 +113,9 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
     # println(mt)
     if mt == "gen"
         s = rand(findall(>(0), p.xsec))
-        # rate = ft * p.xsec[s] * (p.n_tot[p.ps[s]] - n[i, s]) / p.n_tot[p.ps[s]]
-        rate = ft * p.xsec[s] * (p.n_tot[p.ps[s]] - n[i, s])
+        rate = (ft * p.xsec[s] *
+                (p.n_tot[p.ps[s]] - n[i, s]) / p.n_tot[p.ps[s]])
+        # rate = ft * p.xsec[s] * (p.n_tot[p.ps[s]] - n[i, s])
         ist = s
         fst = s
     elseif mt == "se"
@@ -167,11 +170,11 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
         would be to pick one randomly, then select a second species
         for which the corresponding annihilation rate > 0
         """
-        si = rand(findall(>(0), n[i, 1:p.nₛ]))
-        sf = rand(findall(>(0), n[i, 1:p.nₛ]))
+        # si = rand(findall(>(0), n[i, 1:p.nₛ]))
+        # sf = rand(findall(>(0), n[i, 1:p.nₛ]))
         # sf = rand(1:p.nₛ)
         # ordering ensures annihilation counting is commutative
-        pair = (si < sf) ? [si, sf] : [sf, si]
+        pair = sort!(rand(findall(>(0), n[i, 1:p.nₛ]), 2))
         # println("p.dist = ", p.dist, " type = ", typeof(p.dist),
         #         " p.ann = ", p.ann, " type = ", typeof(p.ann),
         #         " pair = ", pair, " p.dist[pair] = ", p.dist[pair],
@@ -185,8 +188,8 @@ function propose_move(l::Lattice, i::Integer, n, ft::Real)
         end
         # one column for every combination
         loss_index = loss_start_index + (2 + (pair[1] - 1)) * p.nₛ + pair[2]
-        ist = si
-        fst = sf
+        ist = pair[1]
+        fst = pair[2]
     else
         println("shouldn't be here! mt = ", mt)
     end
@@ -246,14 +249,15 @@ carry it out and increment the histogram iff 1.) an excitation's been lost
 and 2.) we are currently binning decays.
 """
 function mc_step!(l::Lattice, n, pulse,
-    t::Real, dt::Real, bin::Bool, counts::Matrix{Integer}, binwidth::Real)
+    t::Real, dt::Real, bin::Bool, counts::Matrix{Integer},
+    binwidth::Real, print_debug::Bool)
     
     # current intensity of pulse
     pind = round(Int, t / dt) + 1
     if pind <= length(pulse)
         ft = pulse[pind]
     else 
-        ft = 0
+        ft = zero(eltype(pulse))
     end
     
     # pick each site once on average
@@ -275,11 +279,17 @@ function mc_step!(l::Lattice, n, pulse,
         
             # metropolis
             prob = rate * dt * exp(-1.0 * rate * dt)
-            # println(ft, " ", rate, " ", prob, " ", move_type, " ", loss_index, " ",
-            #         isi, " ", ist, " ", fsi, " ", fst)
             if rand() < prob
                 # carry out the move - this changes population, which
                 # is why we have to check possible moves again above
+                if print_debug
+                    println(ft, " ", rate, " ", prob, " ",
+                            move_type, " ", loss_index, " ",
+                            isi, " ", ist, " ", fsi, " ", fst,
+                            "n[isi, ist] = $(n[isi, ist])",
+                            " n[fsi, fst] = $(n[fsi, fst])",
+                           )
+                end
                 p = l.proteins[l.sites[s].ip]
                 move!(n, move_type, isi, ist, fsi, fst,
                       p.which_ann[ist, fst])
@@ -371,11 +381,12 @@ function one_run(sim, lattice, seed, hist_file)
 
     curr_maxcount = 0
     rep = 1
+    print_debug = false
     while curr_maxcount < sim.maxcount
         t = 0.0
         while t < sim.tmax
             mc_step!(lattice, n, pulse, t, sim.dt1,
-                     true, counts, sim.binwidth)
+                     true, counts, sim.binwidth, print_debug)
             t += sim.dt1
             if t >= 2.0 * sim.pulse_params.μ && sum(n) == 0
                 break
@@ -385,10 +396,15 @@ function one_run(sim, lattice, seed, hist_file)
             println(n)
             throw(BoundsError(n, "n should not be negative"))
         end
+        sums = [sum(n[:, i]) for i = 1:3]
+        if any(sums .> 100)
+            print_debug = true
+        end
+        println("sums = $(sums)")
         # now up to rep rate do the other bit
         while t < pulse_interval
             mc_step!(lattice, n, pulse, t, sim.dt2,
-                     false, counts, sim.binwidth)
+                     false, counts, sim.binwidth, print_debug)
             t += sim.dt2
             if sum(n) == 0
                 break
@@ -412,7 +428,7 @@ function run(seed_start = 0)
     t_t_rates = [0.0, 1e-9, 100e-12, 1e-12]
     # lengths of the corresponding carotenoids
     car_lengths = [7, 9, 10, 13]
-    car_index = 4
+    car_index = 2
     proteins = [make_lh2(t_t_rates[car_index])]
     rho = [1.0]
     lattice = lattice_generation(get_lattice("hex"), nmax,
@@ -421,9 +437,9 @@ function run(seed_start = 0)
     fluences = vec([1.0, 3.0] .* [1e11 1e12 1e13 1e14])
     rep_rates = [26.6e6, 10e6, 4e6, 1.5e6, 0.6e6, 0.2e6]
 
-    pulse_params = PulseParams(200e-12, 50e-12, 800e-9, fluences[8])
-    sim = SimulationParams(15e-9, 1e-12, rep_rates[1],
-                           1e-9, 25e-12, pulse_params, 10, 2)
+    pulse_params = PulseParams(200e-12, 50e-12, 800e-9, fluences[6])
+    sim = SimulationParams(15e-9, 1e-12, rep_rates[6],
+                           1e-9, 25e-12, pulse_params, 1000, 5)
 
     protein_names = [p.name for p in proteins]
     # output directory will be "out/LH2_(rep_rate)_(fluence)_(car_length)"
