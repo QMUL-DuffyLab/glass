@@ -1,11 +1,11 @@
 module Simulations
 include("Lattices.jl")
 
-using Random, DelimitedFiles, PyPlot
+using JSON, Random, DelimitedFiles, PyPlot
 
 struct PulseParams
     μ::Float64
-    σ::Float64
+    fwhm::Float64
     # unsure if we'll need this or not
     λ::Float64
     f::Float64
@@ -27,8 +27,9 @@ trapz(A, dx) = dx * trapz(A)
 
 function construct_pulse(p, dt)
     tmax = 2.0 * p.μ
-    pulse = [(1.0 / (p.σ * sqrt(2.0 * pi))) * 
-             exp(-((i * dt) - p.μ)^2 / (sqrt(2.0) * p.σ)^2)
+    σ = p.fwhm / (2.0 * sqrt(2.0 * log(2.0)))
+    pulse = [(1.0 / (σ * sqrt(2.0 * pi))) * 
+             exp(-((i * dt) - p.μ)^2 / (sqrt(2.0) * σ)^2)
              for i=0:ceil(tmax / dt)]
     pulse .*= (p.f / trapz(pulse, dt))
 end
@@ -419,7 +420,10 @@ function one_run(sim, lattice, seed, hist_file)
             end
         end
         curr_maxcount = maximum(counts[ec..., :])
-        println("proc ", seed, " run ", run, " rep ", rep, " cmc = ", curr_maxcount)
+        if rep // 100 == 0
+            println("seed ", seed, " run ", run,
+                    " rep ", rep, " cmc = ", curr_maxcount)
+        end
         rep += 1
     end
 
@@ -429,38 +433,63 @@ function one_run(sim, lattice, seed, hist_file)
     counts
 end
 
-function run(seed_start = 0)
-
-    nmax = 200
-    # transfer times to Car triplet for different Cars
-    t_t_rates = [0.0, 1e-9, 100e-12, 1e-12]
-    # lengths of the corresponding carotenoids
-    car_lengths = [7, 9, 10, 13]
-    car_index = 2
-    proteins = [make_lh2(t_t_rates[car_index])]
-    rho = [1.0]
-    lattice = lattice_generation(get_lattice("hex"), nmax,
-            proteins, rho)
-
-    fluences = vec([1.0, 3.0] .* [1e11 1e12 1e13 1e14])
-    rep_rates = [26.6e6, 10e6, 4e6, 1.5e6, 0.6e6, 0.2e6]
-
-    pulse_params = PulseParams(200e-12, 50e-12, 800e-9, fluences[6])
-    sim = SimulationParams(15e-9, 1e-12, rep_rates[6],
-                           1e-9, 25e-12, pulse_params, 1000, 5)
-
+function setup(json_file)
+    params = JSON.parsefile(json_file)
+    pd = params["protein"]
+    ld = params["lattice"]
+    proteins = [make_lh2(pd)]
+    lattice = lattice_generation(get_lattice(ld["type"]),
+                                 ld["n_sites"], proteins, [1.0])
+    pd = params["pulse"]
+    pulse_params = PulseParams(pd["peak_time"],
+        pd["fwhm"], pd["wavelength"],
+        pd["fluence"])
+    sd = params["simulation"]
+    sim = SimulationParams(sd["tmax"], sd["dt1"], sd["rep_rate"] * 1e6,
+                           sd["dt2"], sd["binwidth"], pulse_params,
+                           sd["n_counts"], sd["n_repeats"])
     protein_names = [p.name for p in proteins]
-    # output directory will be "out/LH2_(rep_rate)_(fluence)_(car_length)"
     outdir = joinpath("out",
-        join([protein_names..., sim.rep_rate/1e6, "MHz",
-              pulse_params.f, "N", car_lengths[car_index]], "_"))
+        join([protein_names..., "_", sim.rep_rate/1e6, "MHz_fluence_",
+              pulse_params.f, "_T_T_rate_", 
+              params["protein"]["T_T_transfer"], "_"]))
     mkpath(outdir)
+    (sim, lattice, outdir)
+end
+
+function run(json_file, seed_start = 0)
+
+    sim, lattice, outdir = setup(json_file)
+    # nmax = 200
+    # these aren't currently used
+    # transfer times to Car triplet for different Cars
+    # t_t_rates = [0.0, 1e-9, 100e-12, 1e-12]
+    # lengths of the corresponding carotenoids
+    # car_lengths = [7, 9, 10, 13]
+    # car_index = 3
+    # fluences = vec([1.0, 3.0] .* [1e11 1e12 1e13 1e14])
+    # rep_rates = [26.6e6, 10e6, 4e6, 1.5e6, 0.6e6, 0.2e6]
+    # proteins = [make_lh2(t_t_rate)]
+    # rho = [1.0]
+    # lattice = lattice_generation(get_lattice("hex"), nmax,
+    #         proteins, rho)
+
+    # pulse_params = PulseParams(200e-12, 50e-12, 800e-9, fluence)
+    # sim = SimulationParams(15e-9, 1e-12, rep_rate * 1e6,
+    #                        1e-9, 25e-12, pulse_params, n_counts, n_repeats)
+
+    # protein_names = [p.name for p in proteins]
+    # output directory will be "out/LH2_(rep_rate)_(fluence)_(car_length)"
+    # outdir = joinpath("out",
+    #     join([protein_names..., sim.rep_rate/1e6, "MHz_fluence_",
+    #           pulse_params.f, "_T_T_rate_", t_t_rate, "_"]))
+    # mkpath(outdir)
     lattice_plot_file = joinpath(outdir, "lattice.svg")
     pulse_file = joinpath(outdir, "pulse.txt")
     hist_path = joinpath(outdir, "hist")
 
-    pulse = construct_pulse(pulse_params, sim.dt1)
-    x = (0:ceil((2.0 * pulse_params.μ)/sim.dt1)) * sim.dt1
+    pulse = construct_pulse(sim.pulse_params, sim.dt1)
+    x = (0:ceil((2.0 * sim.pulse_params.μ)/sim.dt1)) * sim.dt1
 
     open(pulse_file, "w") do io
         writedlm(io, hcat(x, pulse))

@@ -138,7 +138,7 @@ themselves, BChl triplets and Car triplets, but BChl triplets cannot
 annihilate with Car triplets. It's possible to change various other
 parameters here - hopefully it's clear what they all are.
 singlet xsec here taken from σ(800) in paper, which i assume is for
-one LH2 complex, divided by the number of BChls. rough estimate
+one LH2 complex
 """
 function make_lh2(t_t_time;
     hop_time = 10.0e-12,
@@ -171,6 +171,39 @@ function make_lh2(t_t_time;
         ann_rates,
         [[1 1 1]; [1 1 0]; [1 0 3]], # which state gets annihilated
         [xsec, 0.0, 0.0], # cross-section of each state
+        [true, false, false] # which decays are emissive
+    )
+end
+
+function make_lh2(dict::Dict)
+    hop_rates = 1.0 ./ [dict["hop"], 0., 0.]
+    intra_rates = (1.0 ./ 
+                   [[dict["BChl_S_decay"] dict["ISC"] 0.];
+                    [0.0 dict["BChl_T_decay"] dict["T_T_transfer"]]; 
+                    [0.0 0.0 dict["Car_T_decay"]]])
+    s_s_ann = dict["BChl_S_BChl_S_ann"]
+    s_t_ann = dict["BChl_S_BChl_T_ann"]
+    s_car_ann = dict["BChl_S_Car_T_ann"]
+    t_car_ann = dict["BChl_T_Car_T_ann"]
+    t_t_ann = dict["BChl_T_BChl_T_ann"]
+    car_car_ann = dict["Car_T_Car_T_ann"]
+    ann_rates = (1.0 ./ 
+                 [[s_s_ann s_t_ann s_car_ann];
+                    [s_t_ann t_t_ann t_car_ann]; 
+                    [s_car_ann t_car_ann car_car_ann]])
+    p = Protein("LH2",
+        ["BChl", "Car"],
+        ["BChl_S", "BChl_T", "Car_T"],
+        2, 3, [1, 1, 2], # nₚ, nₛ, which pigment is each state on
+        # following line is distinguishability - Chl states aren't
+        [[false false true]; [false false true]; [true true false]],
+        [27, 9], # number of pigments total
+        [18, 9], # number of states accessible thermally
+        hop_rates,
+        intra_rates,
+        ann_rates,
+        [[1 1 1]; [1 1 0]; [1 0 3]], # which state gets annihilated
+        [dict["xsec"], 0.0, 0.0], # cross-section of each state
         [true, false, false] # which decays are emissive
     )
 end

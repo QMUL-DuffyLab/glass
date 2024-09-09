@@ -1,0 +1,38 @@
+
+{
+"pulse": {
+  "peak_time": 200e-12,
+  "fwhm": 50e-12,
+  "fluence": 3e14,
+  "wavelength": 800e-9
+  },
+"lattice": {
+  "n_sites": 200,
+  "type": "hex",
+  "protein": "LH2"
+  },
+"protein": {
+  "hop": 10e-12,
+  "ISC": 18.6e-9,
+  "T_T_transfer": 18.6e-9,
+  "BChl_S_decay": 1.14e-9,
+  "BChl_T_decay": 5.5e-6,
+  "Car_T_decay": 5.5e-6,
+  "BChl_S_BChl_S_ann": 16.0e-12,
+  "BChl_S_BChl_T_ann": 16.0e-12,
+  "BChl_S_Car_T_ann": 16.0e-12,
+  "BChl_T_BChl_T_ann": 16.0e-12,
+  "BChl_T_Car_T_ann": 16.0e-12,
+  "Car_T_Car_T_ann": 16.0e-12,
+  "xsec": 1e-14
+  },
+"simulation": {
+  "rep_rate": 26.6,
+  "tmax": 15e-9,
+  "dt1": 1e-12,
+  "dt2": 1e-9,
+  "binwidth": 25e-12,
+  "n_counts": 10000,
+  "n_repeats": 3
+  }
+}
