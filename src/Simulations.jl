@@ -1,7 +1,7 @@
 module Simulations
 include("Lattices.jl")
 
-using JSON, Random, DelimitedFiles, PyPlot
+using JSON, Random, DelimitedFiles, PythonPlot
 
 struct PulseParams
     μ::Float64
@@ -348,17 +348,18 @@ function plot_counts(bins, counts, labels, maxcount, outfile)
     cols = [sum(c).>0 for c in eachcol(counts)]
     cplot = counts[:, cols]
     lplot = labels[cols]
-    fig, ax = plt.subplots(figsize=(12,8))
+    fig, ax = pyplot.subplots(figsize=(12,8))
     for i = 1:sum(cols)
         plot(bins, cplot[:, i], label=permutedims(lplot)[i])
     end
     ax.set_ylim(1, 2.0 * maxcount)
     ax.set_yscale("log")
-    plt.grid(visible=true)
+    pyplot.grid(visible=true)
     ax.legend()
     ax.set_xlabel("time (s)")
     ax.set_ylabel("counts")
     savefig(outfile)
+    plotclose(fig)
 end
 
 function one_run(sim, lattice, seed, hist_file)
@@ -452,15 +453,17 @@ function run(json_file, seed_start = 0)
     plot_lattice(lattice, lattice_plot_file)
 
     (bins, total_counts, labels, ec) = generate_histogram(sim, lattice)
+    hist_files = []
 
     run = 1
     while run <= sim.repeats
         hist_file = "$(hist_path)_$(run).txt"
+        hist_files.append!(hist_file)
         total_counts += one_run(sim, lattice, seed_start + run, hist_file)
         run += 1
     end
     
-    (bins, total_counts, labels, ec)
+    hist_files
 end
 
 end
