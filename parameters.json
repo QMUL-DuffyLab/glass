@@ -32,7 +32,7 @@
   "dt1": 1e-12,
   "dt2": 1e-9,
   "binwidth": 25e-12,
-  "n_counts": 10000,
-  "n_repeats": 3
+  "n_counts": 1000,
+  "n_repeats": 1
   }
 }

@@ -359,7 +359,7 @@ function plot_counts(bins, counts, labels, maxcount, outfile)
     ax.set_xlabel("time (s)")
     ax.set_ylabel("counts")
     savefig(outfile)
-    plotclose(fig)
+    plotclose()
 end
 
 function one_run(sim, lattice, seed, hist_file)
@@ -458,7 +458,7 @@ function run(json_file, seed_start = 0)
     run = 1
     while run <= sim.repeats
         hist_file = "$(hist_path)_$(run).txt"
-        append!(hist_files, hist_file)
+        push!(hist_files, hist_file)
         total_counts += one_run(sim, lattice,
                                 seed_start + run, hist_file)
         run += 1
