@@ -458,11 +458,11 @@ function run(json_file, seed_start = 0)
     run = 1
     while run <= sim.repeats
         hist_file = "$(hist_path)_$(run).txt"
-        hist_files.append!(hist_file)
-        total_counts += one_run(sim, lattice, seed_start + run, hist_file)
+        append!(hist_files, hist_file)
+        total_counts += one_run(sim, lattice,
+                                seed_start + run, hist_file)
         run += 1
     end
-    
     hist_files
 end
 
