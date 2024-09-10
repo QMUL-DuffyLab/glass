@@ -398,31 +398,25 @@ function one_run(sim, lattice, seed, hist_file)
                      true, counts, sim.binwidth, print_debug)
             t += sim.dt1
             if t >= 2.0 * sim.pulse_params.μ && sum(n) == 0
+                # no excitations and no pulse - no need to simulate
                 break
             end
         end
-        if any(n .< 0)
-            println(n)
-            throw(BoundsError(n, "n should not be negative"))
-        end
-        sums = [sum(n[:, i]) for i = 1:3]
-        if any(sums .> 100)
-            print_debug = true
-        end
-        println("sums = $(sums)")
+
         # now up to rep rate do the other bit
         while t < pulse_interval
             mc_step!(lattice, n, pulse, sim.pulse_params, t, sim.dt2,
                      false, counts, sim.binwidth, print_debug)
             t += sim.dt2
             if sum(n) == 0
+                # no excitations - no need to simulate
                 break
             end
         end
         curr_maxcount = maximum(counts[ec..., :])
         if rep // 100 == 0
-            println("seed ", seed, " run ", run,
-                    " rep ", rep, " cmc = ", curr_maxcount)
+            println("run number ", run,
+                    " rep ", rep, " max count = ", curr_maxcount)
         end
         rep += 1
     end
@@ -460,30 +454,6 @@ end
 function run(json_file, seed_start = 0)
 
     sim, lattice, outdir = setup(json_file)
-    # nmax = 200
-    # these aren't currently used
-    # transfer times to Car triplet for different Cars
-    # t_t_rates = [0.0, 1e-9, 100e-12, 1e-12]
-    # lengths of the corresponding carotenoids
-    # car_lengths = [7, 9, 10, 13]
-    # car_index = 3
-    # fluences = vec([1.0, 3.0] .* [1e11 1e12 1e13 1e14])
-    # rep_rates = [26.6e6, 10e6, 4e6, 1.5e6, 0.6e6, 0.2e6]
-    # proteins = [make_lh2(t_t_rate)]
-    # rho = [1.0]
-    # lattice = lattice_generation(get_lattice("hex"), nmax,
-    #         proteins, rho)
-
-    # pulse_params = PulseParams(200e-12, 50e-12, 800e-9, fluence)
-    # sim = SimulationParams(15e-9, 1e-12, rep_rate * 1e6,
-    #                        1e-9, 25e-12, pulse_params, n_counts, n_repeats)
-
-    # protein_names = [p.name for p in proteins]
-    # output directory will be "out/LH2_(rep_rate)_(fluence)_(car_length)"
-    # outdir = joinpath("out",
-    #     join([protein_names..., sim.rep_rate/1e6, "MHz_fluence_",
-    #           pulse_params.f, "_T_T_rate_", t_t_rate, "_"]))
-    # mkpath(outdir)
     lattice_plot_file = joinpath(outdir, "lattice.svg")
     pulse_file = joinpath(outdir, "pulse.txt")
     hist_path = joinpath(outdir, "hist")
