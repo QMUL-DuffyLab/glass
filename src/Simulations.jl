@@ -49,9 +49,6 @@ function possible_moves(l::Lattice, i::Int, n, ft::Float64)
     end
     # product of xsec and current population must be > 0 in order for a second
     # photon to be absorbed and cause stimulated emission
-    # println("xsecs = ", xsecs)
-    # println("i = ", " protein = ",
-    #         l.proteins[l.sites[i].ip].name, " n = ", n[i, 1:nₛ])
     if ft > zero(ft) && any(xsecs .* n[i, 1:nₛ] .> 0.0)
         append!(move_types, ["se"])
     end
@@ -156,13 +153,6 @@ function propose_move(l::Lattice, i::Int, n, ft::Float64)
     elseif mt == "decay"
         s = rand(findall(>(0), n[i, 1:p.nₛ]))
         rate = n[i, s] * p.intra[s, s]
-        # println("DECAY: ", n[i, s], " ", p.intra[s,s],
-        #         " typeof(s) = ", typeof(s),
-        #         " typeof(",p.intra,") = ", typeof(p.intra),
-        #         " typeof(",p.intra[s, :],") = ", typeof(p.intra[s, :]),
-        #         " typeof(",p.intra[:, s],") = ", typeof(p.intra[:, s]),
-        #         " typeof(",p.intra[s, s],") = ", typeof(p.intra[s, s]),
-        #        )
         emissive = p.emissive[s]
         loss_index = loss_start_index + p.nₛ + s
         ist = s
@@ -173,15 +163,8 @@ function propose_move(l::Lattice, i::Int, n, ft::Float64)
         would be to pick one randomly, then select a second species
         for which the corresponding annihilation rate > 0
         """
-        # si = rand(findall(>(0), n[i, 1:p.nₛ]))
-        # sf = rand(findall(>(0), n[i, 1:p.nₛ]))
-        # sf = rand(1:p.nₛ)
         # ordering ensures annihilation counting is commutative
         pair = sort!(rand(findall(>(0), n[i, 1:p.nₛ]), 2))
-        # println("p.dist = ", p.dist, " type = ", typeof(p.dist),
-        #         " p.ann = ", p.ann, " type = ", typeof(p.ann),
-        #         " pair = ", pair, " p.dist[pair] = ", p.dist[pair],
-        #         " p.dist[pair expl] = ", p.dist[pair[1], pair[2]])
         if p.dist[pair...]
             # distinguishable
             rate = n[i, pair[1]] * n[i, pair[2]] * p.ann[pair...]
@@ -281,7 +264,8 @@ function mc_step!(l::Lattice, n, pulse, pulse_params,
                 break
             end
             
-            (rate, move_type, loss_index, isi, ist, fsi, fst) = propose_move(l, s, n, ft)
+            (rate, move_type, loss_index,
+             isi, ist, fsi, fst) = propose_move(l, s, n, ft)
         
             # metropolis
             prob = rate * dt * exp(-1.0 * rate * dt)
@@ -475,12 +459,6 @@ function run(json_file, seed_start = 0)
         total_counts += one_run(sim, lattice, seed_start + run, hist_file)
         run += 1
     end
-
-    total_hist_file = "$(hist_path)_total.txt"
-    write_hist(bins, total_counts, labels, ec, total_hist_file)
-    plot_counts(bins, transpose(total_counts), labels,
-                maximum(total_counts),
-                splitext(total_hist_file)[1] * ".png")
     
     (bins, total_counts, labels, ec)
 end

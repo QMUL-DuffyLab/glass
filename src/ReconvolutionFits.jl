@@ -1,6 +1,6 @@
 module ReconvolutionFits
 
-using PyPlot, Symbolics, FFTW, LsqFit, DelimitedFiles
+using PyPlot, Interpolations, Symbolics, FFTW, LsqFit, DelimitedFiles
 
 function multi_exp(x, p)
     # expects [A1, A2,...τ1, τ2...]
@@ -12,8 +12,19 @@ function convol(x, h)
     real.(ifft!(fft(x) .* fft(h)))
 end
 
-function reconv(x, irf, τs, amps, irf_shift)
-
+function reconv(X, args)
+    # args should be [amplitudes..., irf_shift]
+    x = X[:, 1]
+    irf = X[:, 2]
+    taus = X[:, 3]
+    y = zeros(Float64, length(x))
+    itp = linear_interpolation(x, irf, extrapolation_bc=Line())
+    irf_interp = itp(x .- args[end])
+    norm_irf = irf_interp ./ sum(irf_interp)
+    for i = 1:length(args) - 1
+        y .+= args[i] * exp.(-x ./ taus[i])
+    end
+    z = convol(y, norm_irf)
 end
 
 function plot_fit(fit, xyn, outfile)
@@ -58,16 +69,53 @@ function fit(filename, τᵢ, irf_file, pulse_fwhm, pulse_peak)
     # x = 1e9 .* (tail[:, 1] .- max_time)
     x = 1e9 .* (tail[:, 1])
     y = tail[:, 3]
-    fit_res = curve_fit(multi_exp, x, y, wt, p0, lower=lbs, upper=ubs)
-    fit_error = stderror(fit_res)
-    margin_of_error = margin_error(fit_res, 0.05)
+    tail_fit = curve_fit(multi_exp, x, y, wt, p0, lower=lbs, upper=ubs)
+    fit_error = stderror(tail_fit)
+    margin_of_error = margin_error(tail_fit, 0.05)
 
-    println("best fit: $(fit_res.param)")
+    println("best fit (amplitudes then lifetimes (ns)): $(tail_fit.param)")
     println("errors: $(fit_error)")
     println("margin: $(margin_of_error)")
-    outfile = joinpath(dirname(filename), "fit.pdf")
+    outfile = joinpath(dirname(filename), "tail_fit.pdf")
     println(outfile)
-    plot_fit(fit_res, tail, outfile)
+    plot_fit(tail_fit, tail, outfile)
+
+    """
+    explain
+    """
+    irf_data = readdlm(irf_file)
+    irf = irf_data[:, 2]
+    irf_norm = irf ./ sum(irf)
+    itp = linear_interpolation(irf_data[:, 1], irf_norm)
+    irf_interp = zeros(Float64, length(xyn[:, 1]))
+    for i = 1:length(irf_interp)
+        if xyn[i, 1] <= maximum(irf_data[:, 1])
+            irf_interp[i] = itp(xyn[i, 1])
+        else
+            irf_interp[i] = 0.0
+        end
+    end
+    irf_norm = irf_interp ./ sum(irf_interp)
+    taus = zeros(Float64, length(xyn[:, 1]))
+    for i = 1:n_exp
+        taus[i] = tail_fit.param[i + n_exp]
+    end
+    irf_shift = 0.0
+    max_shift = 100.0
+    X = hcat(xyn[:, 1], irf_norm, taus)
+    p0 = [tail_fit.param[1:n_exp]..., irf_shift]
+    lbs = [[0.0 for i=1:n_exp]..., -max_shift]
+    ubs = [[Inf for i=1:n_exp]..., max_shift]
+    reconv_fit = curve_fit(reconv, X, xyn[:, 3], p0, lower=lbs, upper=ubs)
+    fit_error = stderror(reconv_fit)
+    margin_of_error = margin_error(reconv_fit, 0.05)
+    println("best fit (amplitudes then lifetimes (ns)): $(reconv_fit.param)")
+    println("errors: $(fit_error)")
+    println("margin: $(margin_of_error)")
+    outfile = joinpath(dirname(filename), "reconv_fit.pdf")
+    println(outfile)
+    plot_fit(reconv_fit, xyn, outfile)
+
 
 end
 
