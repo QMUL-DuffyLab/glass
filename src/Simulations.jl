@@ -1,7 +1,8 @@
 module Simulations
 include("Lattices.jl")
 
-using Plots, Plots.PlotMeasures, JSON, Random, DelimitedFiles
+using Plots, JSON, Random, DelimitedFiles
+using Plots.PlotMeasures
 
 struct PulseParams
     μ::Float64
@@ -347,7 +348,7 @@ function plot_counts(bins, counts, labels, maxcount, outfile)
     fontsize = 18
     gr(size=(1000,600), fontfamily="sans-serif", linewidth=3,
        framestyle=:box, label=false, grid=true, tickfontsize=fontsize,
-       legend_font_pointsize=fontsize, guidefontsize=fontsize, margin = 5.0)
+       legend_font_pointsize=fontsize, guidefontsize=fontsize, margin = 5.0mm)
     # only plot columns with nonzero counts
     cols = [sum(c).>0 for c in eachcol(counts)]
     cplot = counts[:, cols]
@@ -401,10 +402,6 @@ function one_run(sim, lattice, seed, hist_file)
         curr_maxcount = maximum(counts[ec..., :])
         if rep % 100 == 0
             println("rep ", rep, " max count = ", curr_maxcount)
-            if @isdefined PlutoRunner
-                plot_counts(bins, transpose(counts), labels,
-                            curr_maxcount, nothing)
-            end
         end
         rep += 1
     end
