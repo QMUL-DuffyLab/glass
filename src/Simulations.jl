@@ -1,7 +1,7 @@
 module Simulations
 include("Lattices.jl")
 
-using Plots, JSON, Random, DelimitedFiles, PythonPlot
+using Plots, Plots.PlotMeasures, JSON, Random, DelimitedFiles
 
 struct PulseParams
     μ::Float64
@@ -344,42 +344,21 @@ function write_hist(bins, counts, labels, ec, file)
 end
 
 function plot_counts(bins, counts, labels, maxcount, outfile)
-    # only plot columns with nonzero counts
-    cols = [sum(c).>0 for c in eachcol(counts)]
-    cplot = counts[:, cols]
-    lplot = labels[cols]
-    fig, ax = pyplot.subplots(figsize=(12,8))
-    for i = 1:sum(cols)
-        plot(bins, cplot[:, i], label=permutedims(lplot)[i])
-    end
-    ax.set_ylim(1, 2.0 * maxcount)
-    ax.set_yscale("log")
-    pyplot.grid(visible=true)
-    ax.legend()
-    ax.set_xlabel("time (s)")
-    ax.set_ylabel("counts")
-    if !isnothing(outfile)
-        savefig(outfile)
-    end
-    plotclose()
-end
-
-function plot_counts_gr(bins, counts, labels, maxcount, outfile)
     fontsize = 18
     gr(size=(1000,600), fontfamily="sans-serif", linewidth=3,
        framestyle=:box, label=false, grid=true, tickfontsize=fontsize,
-       legend_font_pointsize=fontsize, guidefontsize=fontsize, margin = 5.0mm)
+       legend_font_pointsize=fontsize, guidefontsize=fontsize, margin = 5.0)
     # only plot columns with nonzero counts
     cols = [sum(c).>0 for c in eachcol(counts)]
     cplot = counts[:, cols]
     lplot = labels[cols]
-    Plots.plot(yscale = :log10, minorgrid = true, xlabel = "time (ns)",
+    plot(yscale = :log10, minorgrid = true, xlabel = "time (ns)",
           ylabel = "counts", ylims = (1.0, 2.0 * maxcount))
     for i = 1:sum(cols)
-        Plots.plot!(bins .* 1e9, cplot[:, i], label=permutedims(lplot)[i])
+        plot!(bins .* 1e9, cplot[:, i], label=permutedims(lplot)[i])
     end
     if !isnothing(outfile)
-        Plots.savefig(outfile)
+        savefig(outfile)
     end
 end
 

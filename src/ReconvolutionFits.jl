@@ -1,6 +1,7 @@
 module ReconvolutionFits
 
-using PythonPlot, Interpolations, Symbolics, FFTW, LsqFit, DelimitedFiles
+using Interpolations, Symbolics, FFTW, LsqFit, DelimitedFiles, Plots
+using Plots.PlotMeasures
 
 function multi_exp(x, p)
     # expects [A1, A2,...τ1, τ2...]
@@ -28,22 +29,19 @@ function reconv(X, args)
 end
 
 function plot_fit(fn, fit, xfit, xdata, ydata, outfile; irf=nothing)
-    x_ns = xdata .* 1e9
+    fontsize = 18
+    gr(size=(1000,600), fontfamily="sans-serif", linewidth=3,
+       framestyle=:box, label=false, grid=true, tickfontsize=fontsize,
+       legend_font_pointsize=fontsize, guidefontsize=fontsize, margin = 5.0mm)
     yfit = fn(xfit, fit.param)
-    fig, ax = pyplot.subplots(figsize=(12,8))
-    plot(x_ns, ydata, label="data")
-    plot(x_ns, yfit, label="fit")
+    plot(yscale = :log10, minorgrid = true, xlabel = "time (ns)",
+          ylabel = "counts", ylims = (1e-4, 2.0))
+    plot!(xdata, ydata, label="data")
+    plot!(xdata, yfit, label="fit")
     if !isnothing(irf)
-        plot(x_ns .- fit.param[end], irf, label="IRF")
+        plot!(xdata .- fit.param[end], irf, label="IRF")
     end
-    ax.set_ylim(1e-5, 2.0) # normalised count max to 1
-    ax.set_yscale("log")
-    pyplot.grid(visible=true)
-    ax.legend()
-    ax.set_xlabel("time (ns)")
-    ax.set_ylabel("counts")
     savefig(outfile)
-    plotclose()
 end
 
 function fit(filename, τᵢ, irf_file)
@@ -75,8 +73,10 @@ function fit(filename, τᵢ, irf_file)
     fit_error = stderror(tail_fit)
     margin_of_error = margin_error(tail_fit, 0.05)
     println("tail fit (amplitudes then lifetimes (ns)): $(tail_fit.param)")
-
-    outfile = joinpath(dirname(filename), "tail_fit.txt")
+    println("covar: $(cov)")
+    println("errors: $(fit_error)")
+    println("margin: $(margin_of_error)")
+    outfile = splitext(filename)[1] * "_tail_fit_n_$(length(τᵢ)).txt"
     open(outfile, "w") do io
         println(io, "best fit (amplitudes then lifetimes (ns)): $(tail_fit.param)")
         println(io, "covar: $(cov)")
@@ -85,7 +85,7 @@ function fit(filename, τᵢ, irf_file)
         println(io, "margin: $(margin_of_error)")
     end
 
-    outfile = joinpath(dirname(filename), "tail_fit.pdf")
+    outfile = splitext(filename)[1] * "_tail_fit_n_$(length(τᵢ)).pdf"
     println(outfile)
     plot_fit(multi_exp, tail_fit, x, x, y, outfile)
 
@@ -110,23 +110,24 @@ function fit(filename, τᵢ, irf_file)
     lbs = [[0.0 for i=1:n_exp]..., -max_shift]
     ubs = [[Inf for i=1:n_exp]..., max_shift]
     reconv_fit = curve_fit(reconv, X, xyn[:, 3], p0, lower=lbs, upper=ubs)
-    # fit_error = stderror(reconv_fit)
-    # margin_of_error = margin_error(reconv_fit, 0.05)
-    #
+    fit_error = stderror(reconv_fit)
+    cov = estimate_covar(reconv_fit)
+    margin_of_error = margin_error(reconv_fit, 0.05)
     println("reconv fit (amplitudes then IRF shift): $(reconv_fit.param)")
-    # println("errors: $(fit_error)")
-    # println("margin: $(margin_of_error)")
-    outfile = joinpath(dirname(filename), "reconv_fit.txt")
+    println("covar: $(cov)")
+    println("errors: $(fit_error)")
+    println("margin: $(margin_of_error)")
+    outfile = splitext(filename)[1] * "_reconv_fit_n_$(length(τᵢ)).txt"
     open(outfile, "w") do io
         println(io, "reconv fit (amplitudes then lifetimes (ns)): $(tail_fit.param)")
-        # println(io, "covar: $(cov)")
-        # println(io, "errors: $(fit_error)")
-        # println(io, "errors: $(fit_error)")
-        # println(io, "margin: $(margin_of_error)")
+        println(io, "covar: $(cov)")
+        println(io, "errors: $(fit_error)")
+        println(io, "errors: $(fit_error)")
+        println(io, "margin: $(margin_of_error)")
     end
 
-    outfile = joinpath(dirname(filename), "reconv_fit.pdf")
-    plot_fit(reconv, reconv_fit, X, xyn[:, 1], xyn[:, 3],
+    outfile = splitext(filename)[1] * "_reconv_fit_n_$(length(τᵢ)).pdf"
+    plot_fit(reconv, reconv_fit, X, xyn[:, 1] .* 1e9, xyn[:, 3],
              outfile, irf=irf_norm)
 end
 
