@@ -1,7 +1,7 @@
 module Simulations
 include("Lattices.jl")
 
-using JSON, Random, DelimitedFiles, PythonPlot
+using Plots, JSON, Random, DelimitedFiles, PythonPlot
 
 struct PulseParams
     μ::Float64
@@ -358,8 +358,29 @@ function plot_counts(bins, counts, labels, maxcount, outfile)
     ax.legend()
     ax.set_xlabel("time (s)")
     ax.set_ylabel("counts")
-    savefig(outfile)
+    if !isnothing(outfile)
+        savefig(outfile)
+    end
     plotclose()
+end
+
+function plot_counts_gr(bins, counts, labels, maxcount, outfile)
+    fontsize = 18
+    gr(size=(1000,600), fontfamily="sans-serif", linewidth=3,
+       framestyle=:box, label=false, grid=true, tickfontsize=fontsize,
+       legend_font_pointsize=fontsize, guidefontsize=fontsize, margin = 5.0mm)
+    # only plot columns with nonzero counts
+    cols = [sum(c).>0 for c in eachcol(counts)]
+    cplot = counts[:, cols]
+    lplot = labels[cols]
+    Plots.plot(yscale = :log10, minorgrid = true, xlabel = "time (ns)",
+          ylabel = "counts", ylims = (1.0, 2.0 * maxcount))
+    for i = 1:sum(cols)
+        Plots.plot!(bins .* 1e9, cplot[:, i], label=permutedims(lplot)[i])
+    end
+    if !isnothing(outfile)
+        Plots.savefig(outfile)
+    end
 end
 
 function one_run(sim, lattice, seed, hist_file)
@@ -399,9 +420,12 @@ function one_run(sim, lattice, seed, hist_file)
             end
         end
         curr_maxcount = maximum(counts[ec..., :])
-        if rep // 100 == 0
-            println("run number ", run,
-                    " rep ", rep, " max count = ", curr_maxcount)
+        if rep % 100 == 0
+            println("rep ", rep, " max count = ", curr_maxcount)
+            if @isdefined PlutoRunner
+                plot_counts(bins, transpose(counts), labels,
+                            curr_maxcount, nothing)
+            end
         end
         rep += 1
     end
@@ -412,7 +436,7 @@ function one_run(sim, lattice, seed, hist_file)
     counts
 end
 
-function setup(json_file)
+function setup(json_file, outpath="out")
     params = JSON.parsefile(json_file)
     pd = params["protein"]
     ld = params["lattice"]
@@ -428,7 +452,7 @@ function setup(json_file)
                            sd["dt2"], sd["binwidth"], pulse_params,
                            sd["n_counts"], sd["n_repeats"])
     protein_names = [p.name for p in proteins]
-    outdir = joinpath("out",
+    outdir = joinpath(outpath,
         join([protein_names..., "_", sim.rep_rate/1e6, "MHz_fluence_",
               pulse_params.f, "_T_T_rate_", 
               params["protein"]["T_T_transfer"], "_"]))
@@ -436,9 +460,10 @@ function setup(json_file)
     (sim, lattice, outdir)
 end
 
-function run(json_file, seed_start = 0)
+function run(json_file, seed_start=0, outpath="out")
 
-    sim, lattice, outdir = setup(json_file)
+    sim, lattice, outdir = setup(json_file, outpath)
+    println(outdir)
     lattice_plot_file = joinpath(outdir, "lattice.svg")
     pulse_file = joinpath(outdir, "pulse.txt")
     hist_path = joinpath(outdir, "hist")
@@ -459,6 +484,7 @@ function run(json_file, seed_start = 0)
     while run <= sim.repeats
         hist_file = "$(hist_path)_$(run).txt"
         push!(hist_files, hist_file)
+        println("Run $(run)")
         total_counts += one_run(sim, lattice,
                                 seed_start + run, hist_file)
         run += 1

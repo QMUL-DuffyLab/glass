@@ -1,3 +1,4 @@
 out*
 .Conda*
 Manifest.toml
+parameters.json
