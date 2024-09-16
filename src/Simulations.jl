@@ -400,8 +400,8 @@ function one_run(sim, lattice, seed, hist_file)
             end
         end
         curr_maxcount = maximum(counts[ec..., :])
-        if rep % 100 == 0
-            println("rep ", rep, " max count = ", curr_maxcount)
+        if rep % 50 == 0
+            println("Rep $(rep), max count = $(curr_maxcount)")
         end
         rep += 1
     end

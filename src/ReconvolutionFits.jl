@@ -125,9 +125,24 @@ function fit(filename, τᵢ, irf_file=nothing)
 
     # do tail fit, get fit data, print out, plot
     tail_fit = curve_fit(multi_exp, x, y, wt, p0, lower=lbs, upper=ubs)
-    cov = estimate_covar(tail_fit)
-    fit_error = stderror(tail_fit)
-    margin_of_error = margin_error(tail_fit, 0.05)
+    # try
+        cov = estimate_covar(tail_fit)
+    # catch
+    #     @warn "could not calculate covariances for tail fit"
+    #     cov = Inf
+    # end
+    # try
+        fit_error = stderror(tail_fit)
+    # catch
+    #     @warn "could not calculate error for tail fit"
+    #     fit_error = Inf
+    # end
+    # try
+        margin_of_error = margin_error(tail_fit, 0.05)
+    # catch
+    #     @warn "could not calculate margin of error for tail fit"
+    #     margin_of_error = Inf
+    # end
     println("tail fit (amplitudes then lifetimes (ns)): $(tail_fit.param)")
     println("covar: $(cov)")
     println("errors: $(fit_error)")
@@ -188,13 +203,24 @@ function fit(filename, τᵢ, irf_file=nothing)
     lbs = [[0.0 for i=1:n_exp]..., -max_shift]
     ubs = [[Inf for i=1:n_exp]..., max_shift]
     reconv_fit = curve_fit(reconv, X, xyn[:, 3], p0, lower=lbs, upper=ubs)
-    # should really wrap each of these in a try block - otherwise
-    # if any of them fail due to bad covariances etc. it'll just
-    # throw an error and refuse to do anything else, which is annoying
-    # if you're trying to do multiple fits from a script
-    fit_error = stderror(reconv_fit)
-    cov = estimate_covar(reconv_fit)
-    margin_of_error = margin_error(reconv_fit, 0.05)
+    # try
+        cov = estimate_covar(tail_fit)
+    # catch
+    #     @warn "could not calculate covariances for reconvolution fit"
+    #     cov = Inf
+    # end
+    # try
+        fit_error = stderror(tail_fit)
+    # catch
+    #     @warn "could not calculate error for reconvolution fit"
+    #     fit_error = Inf
+    # end
+    # try
+        margin_of_error = margin_error(tail_fit, 0.05)
+    # catch
+    #     @warn "could not calculate margin of error for reconvolution fit"
+    #     margin_of_error = Inf
+    # end
     println("reconv fit (amplitudes then IRF shift): $(reconv_fit.param)")
     println("covar: $(cov)")
     println("errors: $(fit_error)")
