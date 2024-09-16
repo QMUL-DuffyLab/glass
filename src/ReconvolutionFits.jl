@@ -53,11 +53,12 @@ function plot_fit(fn, fit, xfit, xdata, ydata, outfile; irf=nothing)
     yfit = fn(xfit, fit.param)
     plot(yscale = :log10, minorgrid = true, xlabel = "time (ns)",
           ylabel = "counts", ylims = (1e-4, 2.0))
+    if !isnothing(irf)
+        plot!(xdata .- fit.param[end], irf,
+              label="IRF", linestyle=:dash, lw=1.5, lc=:black)
+    end
     plot!(xdata, ydata, label="data")
     plot!(xdata, yfit, label="fit")
-    if !isnothing(irf)
-        plot!(xdata .- fit.param[end], irf, label="IRF")
-    end
     savefig(outfile)
 end
 
