@@ -237,6 +237,14 @@ function fit(filename, τᵢ, irf_file=nothing)
     outfile = splitext(filename)[1] * "_reconv_fit_n_$(length(τᵢ)).pdf"
     plot_fit(reconv, reconv_fit, X, xyn[:, 1] .* 1e9, xyn[:, 3],
              outfile, irf=irf_norm)
+
+    # print the fitted trace to a text file
+    yreconv = reconv(X, reconv_fit.param)
+    outfile = splitext(filename)[1] * "_fit_trace_n_$(length(τᵢ)).txt"
+    open(outfile, "w") do io
+        writedlm(io, hcat(xyn[:, 1], yreconv))
+    end
+
 end
 
 end
