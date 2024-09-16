@@ -227,9 +227,9 @@ function fit(filename, τᵢ, irf_file=nothing)
     println("margin: $(margin_of_error)")
     outfile = splitext(filename)[1] * "_reconv_fit_n_$(length(τᵢ)).txt"
     open(outfile, "w") do io
-        println(io, "reconv fit (amplitudes then lifetimes (ns)): $(tail_fit.param)")
+        println(io, "reconv fit (amplitudes then IRF shift (ns)): $(reconv_fit.param)")
+        println(io, "time constants from tail fit: $(taus[1:n_exp])")
         println(io, "covar: $(cov)")
-        println(io, "errors: $(fit_error)")
         println(io, "errors: $(fit_error)")
         println(io, "margin: $(margin_of_error)")
     end
