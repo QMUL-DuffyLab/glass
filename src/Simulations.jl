@@ -28,7 +28,7 @@ trapz(A, dx) = dx * trapz(A)
 
 function construct_pulse(p, dt)
     σ = p.fwhm / (2.0 * sqrt(2.0 * log(2.0)))
-    tmax = p.μ + 2.0 * p.σ
+    tmax = p.μ + 2.0 * p.fwhm
     pulse = [(1.0 / (σ * sqrt(2.0 * pi))) * 
              exp(-((i * dt) - p.μ)^2 / (sqrt(2.0) * σ)^2)
              for i=0:ceil(tmax / dt)]
@@ -445,7 +445,7 @@ function run(json_file, seed_start=0, outpath="out")
     hist_path = joinpath(outdir, "hist")
 
     pulse = construct_pulse(sim.pulse_params, sim.dt1)
-    x = (0:ceil((2.0 * sim.pulse_params.μ)/sim.dt1)) * sim.dt1
+    x = (0:length(pulse) - 1) * sim.dt1
 
     open(pulse_file, "w") do io
         writedlm(io, hcat(x, pulse))

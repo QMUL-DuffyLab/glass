@@ -1,4 +1,4 @@
-using Pkg; Pkg.activate("."); Pkg.instantiate(); Pkg.precompile()
+using Pkg; Pkg.activate("."); Pkg.resolve(); Pkg.instantiate(); Pkg.precompile()
 
 using ArgParse
 
