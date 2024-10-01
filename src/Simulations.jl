@@ -27,8 +27,8 @@ trapz(A) = sum(A) + (A[begin] + A[end]) / 2.0
 trapz(A, dx) = dx * trapz(A)
 
 function construct_pulse(p, dt)
-    tmax = 2.0 * p.μ
     σ = p.fwhm / (2.0 * sqrt(2.0 * log(2.0)))
+    tmax = p.μ + 2.0 * p.σ
     pulse = [(1.0 / (σ * sqrt(2.0 * pi))) * 
              exp(-((i * dt) - p.μ)^2 / (sqrt(2.0) * σ)^2)
              for i=0:ceil(tmax / dt)]

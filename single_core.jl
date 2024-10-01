@@ -29,7 +29,16 @@ cp(args["parameter_file"],
 for file in hist_files
     irf_file = joinpath(dirname(file), "pulse.txt")
     τᵢ= [1.1e-9]
-    ReconvolutionFits.fit(file, τᵢ, irf_file)
+    try
+      ReconvolutionFits.fit(file, τᵢ, irf_file)
+    catch e
+      println("Monoexponential fit didn't work")
+    end
     τᵢ= [1.1e-9, 0.1e-9]
-    ReconvolutionFits.fit(file, τᵢ, irf_file)
+    try
+      ReconvolutionFits.fit(file, τᵢ, irf_file)
+    catch e
+      println("Monoexponential fit didn't work")
+    end
+
 end
