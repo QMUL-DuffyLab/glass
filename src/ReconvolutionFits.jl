@@ -62,6 +62,37 @@ function plot_fit(fn, fit, xfit, xdata, ydata, outfile; irf=nothing)
     savefig(outfile)
 end
 
+function sanitise_counts(filename, data_type, irf_file)
+
+    if data_type == "experimental"
+        raw = readdlm(filename)
+        bcle = raw[3:end, 1:end] # header lines? check
+        bins = bcle[1:end, 1]
+        ec = bcle[1:end, 2]
+        irf_data = bcle[1:end, 3:4]
+    elseif data_type == "simulated"
+        bcle = readdlm(filename)
+        labels = bcle[1, 1:end]
+        emissive = bcle[2, 1:end]
+        bincounts = bcle[3:end, 1:end]
+        bins = bincounts[1:end, 1]
+        # pull the emissive columns and sum row-by-row (bin-by-bin)
+        # if there are more than one - otherwise this sum does nothing
+        ec = sum(bincounts[:, emissive .> 0], dims=2)
+        irf_data = readdlm(irf_file)
+    else
+        println("data_type not recognised in sanitise_counts")
+    end
+    irf = irf_data[:, 2]
+    irf_norm = irf ./ sum(irf)
+    itp = linear_interpolation(irf_data[:, 1], irf_norm,
+                               extrapolation_bc=Line())
+    irf_interp = itp(bins)
+    irf_norm = irf_interp ./ maximum(irf_interp)
+    return (bins, ec, irf_norm)
+
+end
+
 """
 wrapper to do a tail fit and then reconvolution fit for a given
 simulated trace. you have to give it a set of starting guesses for the
@@ -78,7 +109,7 @@ will always be true so don't worry.
 Outputs a pair of text files with tail fit and reconvolution fit data,
 and corresponding plots showing the simulated data with the fits.
 """
-function fit(filename, τᵢ, irf_file=nothing)
+function fit(filename, τᵢ, data_type, irf_file)
     """
     first load in an output histogram and get the sum of the
     emissive counts; these correspond to the output of the experimental
@@ -89,22 +120,12 @@ function fit(filename, τᵢ, irf_file=nothing)
     We cut the data off at the maximum count first and fit the tail
     to get time constants for the exponentials, then we hold those
     constant and fit the amplitudes with the IRF below.
-
-    NB: this won't work for an experimental histogram because the
-    format of the output won't be the same. I'll write a
-    sanitise_counts function to check whether it's a simulated or
-    experimental trace if necessary, but this works fine if you only
-    want to fit my simulated results.
     """
-    bcle = readdlm(filename)
-    labels = bcle[1, 1:end]
-    emissive = bcle[2, 1:end]
-    bincounts = bcle[3:end, 1:end]
-    # pull the emissive columns and sum row-by-row (bin-by-bin)
-    # if there are more than one - otherwise this sum does nothing
-    ec = sum(bincounts[:, emissive .> 0], dims=2)
-    max_time = bincounts[argmax(ec), 1]
-    xyn = hcat(bincounts[:, 1], ec, ec / maximum(ec))
+
+    bins, ec, irf_norm = sanitise_counts(filename, data_type, irf_file)
+
+    max_time = bins[argmax(ec)]
+    xyn = hcat(bins, ec, ec / maximum(ec))
     tail = xyn[xyn[:, 1] .>= max_time, :]
     tail_σ = zeros(Float64, length(tail[:, 2])) 
     for i = 1:length(tail_σ)
@@ -124,25 +145,12 @@ function fit(filename, τᵢ, irf_file=nothing)
     y = tail[:, 3]
 
     # do tail fit, get fit data, print out, plot
+    # these aren't wrapped in a try block because this whole
+    # function is elsewhere in the script it's called from
     tail_fit = curve_fit(multi_exp, x, y, wt, p0, lower=lbs, upper=ubs)
-    # try
-        cov = estimate_covar(tail_fit)
-    # catch
-    #     @warn "could not calculate covariances for tail fit"
-    #     cov = Inf
-    # end
-    # try
-        fit_error = stderror(tail_fit)
-    # catch
-    #     @warn "could not calculate error for tail fit"
-    #     fit_error = Inf
-    # end
-    # try
-        margin_of_error = margin_error(tail_fit, 0.05)
-    # catch
-    #     @warn "could not calculate margin of error for tail fit"
-    #     margin_of_error = Inf
-    # end
+    cov = estimate_covar(tail_fit)
+    fit_error = stderror(tail_fit)
+    margin_of_error = margin_error(tail_fit, 0.05)
     println("tail fit (amplitudes then lifetimes (ns)): $(tail_fit.param)")
     println("covar: $(cov)")
     println("errors: $(fit_error)")
@@ -177,18 +185,6 @@ function fit(filename, τᵢ, irf_file=nothing)
     two-column text file containing time values and IRF values,
     otherwise readdlm might not work here.
     """
-    if !isnothing(irf_file)
-        irf_data = readdlm(irf_file)
-    else
-        irf_file = joinpath(dirname(filename), "pulse.txt")
-        irf_data = readdlm(irf_file)
-    end
-    irf = irf_data[:, 2]
-    irf_norm = irf ./ sum(irf)
-    itp = linear_interpolation(irf_data[:, 1], irf_norm,
-                               extrapolation_bc=Line())
-    irf_interp = itp(xyn[:, 1])
-    irf_norm = irf_interp ./ maximum(irf_interp)
     taus = zeros(Float64, length(xyn[:, 1]))
     for i = 1:n_exp
         taus[i] = tail_fit.param[i + n_exp]
@@ -203,24 +199,11 @@ function fit(filename, τᵢ, irf_file=nothing)
     lbs = [[0.0 for i=1:n_exp]..., -max_shift]
     ubs = [[Inf for i=1:n_exp]..., max_shift]
     reconv_fit = curve_fit(reconv, X, xyn[:, 3], p0, lower=lbs, upper=ubs)
-    # try
-        cov = estimate_covar(tail_fit)
-    # catch
-    #     @warn "could not calculate covariances for reconvolution fit"
-    #     cov = Inf
-    # end
-    # try
-        fit_error = stderror(tail_fit)
-    # catch
-    #     @warn "could not calculate error for reconvolution fit"
-    #     fit_error = Inf
-    # end
-    # try
-        margin_of_error = margin_error(tail_fit, 0.05)
-    # catch
-    #     @warn "could not calculate margin of error for reconvolution fit"
-    #     margin_of_error = Inf
-    # end
+    amp = reconv_fit.param[1:end-1]
+    norm_amp = amp ./ sum(amp)
+    cov = estimate_covar(tail_fit)
+    fit_error = stderror(tail_fit)
+    margin_of_error = margin_error(tail_fit, 0.05)
     println("reconv fit (amplitudes then IRF shift): $(reconv_fit.param)")
     println("covar: $(cov)")
     println("errors: $(fit_error)")
@@ -228,7 +211,9 @@ function fit(filename, τᵢ, irf_file=nothing)
     outfile = splitext(filename)[1] * "_reconv_fit_n_$(length(τᵢ)).txt"
     open(outfile, "w") do io
         println(io, "reconv fit (amplitudes then IRF shift (ns)): $(reconv_fit.param)")
+        println(io, "normalised amplitudes (ns): $(norm_amp)")
         println(io, "time constants from tail fit: $(taus[1:n_exp])")
+        println(io, "τ_avg (∑ a_i τ_i): $(sum(norm_amp .* taus[1:n_exp]))")
         println(io, "covar: $(cov)")
         println(io, "errors: $(fit_error)")
         println(io, "margin: $(margin_of_error)")
