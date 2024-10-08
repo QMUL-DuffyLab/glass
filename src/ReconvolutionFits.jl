@@ -65,11 +65,14 @@ end
 function sanitise_counts(filename, data_type, irf_file)
 
     if data_type == "experimental"
-        raw = readdlm(filename)
-        bcle = raw[3:end, 1:end] # header lines? check
+        bcle = readdlm(filename)
         bins = bcle[1:end, 1]
         ec = bcle[1:end, 2]
-        irf_data = bcle[1:end, 3:4]
+        if !isnothing(irf_file)
+            irf_data = readdlm(irf_file)
+        else
+            irf_data = bcle[1:end, 3:4]
+        end
     elseif data_type == "simulated"
         bcle = readdlm(filename)
         labels = bcle[1, 1:end]
@@ -79,12 +82,18 @@ function sanitise_counts(filename, data_type, irf_file)
         # pull the emissive columns and sum row-by-row (bin-by-bin)
         # if there are more than one - otherwise this sum does nothing
         ec = sum(bincounts[:, emissive .> 0], dims=2)
-        irf_data = readdlm(irf_file)
+        if !isempty(irf_file)
+            irf_data = readdlm(irf_file)
+        else
+            irf_file = joinpath(dirname(file), "pulse.txt")
+            irf_data = readdlm(irf_file)
+        end
     else
         println("data_type not recognised in sanitise_counts")
     end
     irf = irf_data[:, 2]
     irf_norm = irf ./ sum(irf)
+    # interpolate to the same set of bins as the data just in case
     itp = linear_interpolation(irf_data[:, 1], irf_norm,
                                extrapolation_bc=Line())
     irf_interp = itp(bins)
