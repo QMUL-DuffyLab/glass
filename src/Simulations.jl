@@ -412,7 +412,7 @@ function one_run(sim, lattice, seed, hist_file)
     counts
 end
 
-function setup(json_file, outpath="out")
+function setup(json_file, n_procs=1, outpath="out")
     params = JSON.parsefile(json_file)
     pd = params["protein"]
     ld = params["lattice"]
@@ -424,9 +424,10 @@ function setup(json_file, outpath="out")
         pd["fwhm"], pd["wavelength"],
         pd["fluence"])
     sd = params["simulation"]
+    counts_per_proc = sd["n_counts"] / n_procs
     sim = SimulationParams(sd["tmax"], sd["dt1"], sd["rep_rate"] * 1e6,
                            sd["dt2"], sd["binwidth"], pulse_params,
-                           sd["n_counts"], sd["n_repeats"])
+                           counts_per_proc, sd["n_repeats"])
     protein_names = [p.name for p in proteins]
     outdir = joinpath(outpath,
         join([protein_names..., "_", sim.rep_rate/1e6, "MHz_fluence_",
@@ -436,9 +437,9 @@ function setup(json_file, outpath="out")
     (sim, lattice, outdir)
 end
 
-function run(json_file, seed_start=0, outpath="out")
+function run(json_file, seed_start=0, n_procs=1, outpath="out")
 
-    sim, lattice, outdir = setup(json_file, outpath)
+    sim, lattice, outdir = setup(json_file, n_procs, outpath)
     println(outdir)
     lattice_plot_file = joinpath(outdir, "lattice.svg")
     pulse_file = joinpath(outdir, "pulse.txt")
@@ -458,11 +459,11 @@ function run(json_file, seed_start=0, outpath="out")
 
     run = 1
     while run <= sim.repeats
+        seed = seed_start + (run * n_procs)
         hist_file = "$(hist_path)_$(run).txt"
         push!(hist_files, hist_file)
         println("Run $(run)")
-        total_counts += one_run(sim, lattice,
-                                seed_start + run, hist_file)
+        total_counts += one_run(sim, lattice, seed, hist_file)
         run += 1
     end
     hist_files

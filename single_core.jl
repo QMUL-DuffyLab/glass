@@ -20,7 +20,7 @@ include("src/Simulations.jl"); using .Simulations
 include("src/ReconvolutionFits.jl"); using .ReconvolutionFits
 
 outpath = joinpath("out", "test")
-hist_files = Simulations.run(args["parameter_file"], 0, outpath)
+hist_files = Simulations.run(args["parameter_file"], 0, 1, outpath)
 # copy the paramter file to the output dir
 cp(args["parameter_file"],
    joinpath(dirname(hist_files[1]),

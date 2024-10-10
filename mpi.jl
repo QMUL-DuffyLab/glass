@@ -1,25 +1,48 @@
-using MPI
-using ArgParse
+using Pkg; Pkg.activate("."); Pkg.resolve(); Pkg.instantiate(); Pkg.precompile()
+
+using MPI, ArgParse
 
 function parse_cmds()
     s = ArgParseSettings()
     @add_arg_table s begin
-        "--n_procs"
-            help = "Number of cores to use"
-            arg_type = Int
+        "--parameter_file"
+            help = "Filename for parameters (JSON)"
+            arg_type = String
             required = false
-            default = 4
+            default = "parameters.json"
     end
     return parse_args(s)
 end
 
 args = parse_cmds()
-addprocs(args["n_procs"])
 
-"""
-mpi broadcast the name of the parameter file?
-then get each proc to print out the simulation params
-etc and check it's in the right form?
-then check the sum over histogram in the code and
-figure out how to do that in the reduce call
-"""
+MPI.Init()
+const comm = MPI.COMM_WORLD
+const root = 0
+
+include("src/Simulations.jl"); using .Simulations
+include("src/ReconvolutionFits.jl"); using .ReconvolutionFits
+
+outpath = joinpath("out", "test_MPI")
+hist_files = Simulations.run(args["parameter_file"],
+                             MPI.Comm_rank(comm),
+                             MPI.Comm_size(comm),
+                             outpath)
+# copy the paramter file to the output dir
+cp(args["parameter_file"],
+   joinpath(dirname(hist_files[1]),
+            args["parameter_file"]), force=true)
+
+for file in hist_files
+    irf_file = joinpath(dirname(file), "pulse.txt")
+
+    τᵢ= [1.1e-9, 0.5e-9, 0.05e-9]
+    for i = 1:length(τᵢ)
+        taus = τᵢ[1:i]
+        try
+            ReconvolutionFits.fit(file, taus, "simulated", irf_file)
+        catch e
+            println("$(i)-exponential fit didn't work")
+        end
+    end
+end
