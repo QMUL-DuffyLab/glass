@@ -401,11 +401,12 @@ function one_run(sim, lattice, seed, hist_file)
         end
         curr_maxcount = maximum(counts[ec..., :])
         if rep % 50 == 0
-            println("Rep $(rep), max count = $(curr_maxcount)")
+          println("Rep $(rep), seed $(seed), max count = $(curr_maxcount)")
         end
         rep += 1
     end
 
+    println("Rep $(rep), seed $(seed), max count = $(curr_maxcount)")
     write_hist(bins, counts, labels, ec, hist_file)
     plot_counts(bins, transpose(counts), labels, maximum(counts),
                 splitext(hist_file)[1] * ".png")
@@ -454,16 +455,15 @@ function run(json_file, seed_start=0, n_procs=1, outpath="out")
 
     plot_lattice(lattice, lattice_plot_file)
 
-    (bins, total_counts, labels, ec) = generate_histogram(sim, lattice)
     hist_files = []
 
     run = 1
     while run <= sim.repeats
         seed = seed_start + (run * n_procs)
-        hist_file = "$(hist_path)_$(run).txt"
+        hist_file = "$(hist_path)_$(run)_$(seed).txt"
         push!(hist_files, hist_file)
         println("Run $(run)")
-        total_counts += one_run(sim, lattice, seed, hist_file)
+        counts = one_run(sim, lattice, seed, hist_file)
         run += 1
     end
     hist_files
