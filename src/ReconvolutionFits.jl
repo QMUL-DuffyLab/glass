@@ -68,10 +68,55 @@ function sanitise_counts(filename, data_type, irf_file)
         bcle = readdlm(filename)
         bins = bcle[1:end, 1]
         ec = bcle[1:end, 2]
+        println("time of max bin (raw): ", bins[argmax(ec)])
+        # normalise the time: first find the max, then count back
+        # to find where the curve starts rising
+        maxi = argmax(ec)
+        fnz = findprev(x -> x == 0, ec, maxi)
+        if log10(bins[fnz]) > 0.0
+          # assume bins are given in ns!
+          bins .*= 1e-9
+        end
+        bins = bins .- bins[fnz]
+        # i think this should be fine to do now we've shifted everything?
+        zi = findfirst(isequal(0.0), bins)
+        bins = bins[zi:end]
+        ec = ec[zi:end]
+        println("time of max bin (after): ", bins[argmax(ec)])
+        outfile = joinpath(dirname(filename), "exp_bincounts.txt")
+        open(outfile, "w") do io
+          writedlm(io, hcat(bins, ec))
+        end
         if !isnothing(irf_file)
             irf_data = readdlm(irf_file)
         else
             irf_data = bcle[1:end, 3:4]
+        end
+        maxi = argmax(irf_data[:, 2])
+        println("time of max IRF bin (raw): ", irf_data[maxi, 1])
+        if log10(irf_data[maxi, 1]) > 0.0
+          # assume bins are given in ns!
+          irf_data[:, 1] .*= 1e-9
+        end
+        fnz = findprev(x -> x <= 0, irf_data[:, 2], maxi)
+        if !isnothing(fnz)
+          println("irf_bin[fnz]: ", irf_data[fnz, 1])
+          irf_data[:, 1] = irf_data[:, 1] .- irf_data[fnz, 1]
+          println("time of max IRF bin (after): ", irf_data[maxi, 1])
+        end
+        fnz = findfirst(x -> x >= 0, irf_data[:, 1])
+        max_irf_time = 20.0 * 1e-9 # cut off after 20 ns
+        mti = findfirst(x -> x >= max_irf_time, irf_data[:, 1])
+        if !isnothing(fnz) && !isnothing(mti)
+          irf_data = irf_data[fnz:mti, :]
+        end
+        # zero negative IRF values
+        mask = irf_data[:, 2] .< zero(eltype(irf_data))
+        irf_data[mask, 2] .= zero(eltype(irf_data))
+
+        irf_file = joinpath(dirname(filename), "exp_irf.txt")
+        open(irf_file, "w") do io
+            writedlm(io, irf_data)
         end
     elseif data_type == "simulated"
         bcle = readdlm(filename)
@@ -91,8 +136,7 @@ function sanitise_counts(filename, data_type, irf_file)
     else
         println("data_type not recognised in sanitise_counts")
     end
-    irf = irf_data[:, 2]
-    irf_norm = irf ./ sum(irf)
+    irf_norm = irf_data[:, 2] ./ sum(irf_data[:, 2])
     # interpolate to the same set of bins as the data just in case
     itp = linear_interpolation(irf_data[:, 1], irf_norm,
                                extrapolation_bc=Line())
@@ -157,20 +201,24 @@ function fit(filename, τᵢ, data_type, irf_file)
     # these aren't wrapped in a try block because this whole
     # function is elsewhere in the script it's called from
     tail_fit = curve_fit(multi_exp, x, y, wt, p0, lower=lbs, upper=ubs)
-    cov = estimate_covar(tail_fit)
-    fit_error = stderror(tail_fit)
-    margin_of_error = margin_error(tail_fit, 0.05)
-    println("tail fit (amplitudes then lifetimes (ns)): $(tail_fit.param)")
-    println("covar: $(cov)")
-    println("errors: $(fit_error)")
-    println("margin: $(margin_of_error)")
-    outfile = splitext(filename)[1] * "_tail_fit_n_$(length(τᵢ)).txt"
-    open(outfile, "w") do io
-        println(io, "best fit (amplitudes then lifetimes (ns)): $(tail_fit.param)")
-        println(io, "covar: $(cov)")
-        println(io, "errors: $(fit_error)")
-        println(io, "errors: $(fit_error)")
-        println(io, "margin: $(margin_of_error)")
+    try
+      cov = estimate_covar(tail_fit)
+      fit_error = stderror(tail_fit)
+      margin_of_error = margin_error(tail_fit, 0.05)
+      println("tail fit (amplitudes then lifetimes (ns)): $(tail_fit.param)")
+      println("covar: $(cov)")
+      println("errors: $(fit_error)")
+      println("margin: $(margin_of_error)")
+      outfile = splitext(filename)[1] * "_tail_fit_n_$(length(τᵢ)).txt"
+      open(outfile, "w") do io
+          println(io, "best fit (amplitudes then lifetimes (ns)): $(tail_fit.param)")
+          println(io, "covar: $(cov)")
+          println(io, "errors: $(fit_error)")
+          println(io, "errors: $(fit_error)")
+          println(io, "margin: $(margin_of_error)")
+      end
+    catch e
+      println("errors in tail fit")
     end
     outfile = splitext(filename)[1] * "_tail_fit_n_$(length(τᵢ)).pdf"
     println(outfile)
@@ -199,14 +247,15 @@ function fit(filename, τᵢ, data_type, irf_file)
         taus[i] = tail_fit.param[i + n_exp]
     end
     irf_shift = 0.0
-    max_shift = 100.0
+    max_shift = 1.0
     # wrap the independent variables as described above
     X = hcat(1e9 .* xyn[:, 1], irf_norm, taus)
     # starting parameters are the fitted amplitudes and 0 for IRF shift
     p0 = [tail_fit.param[1:n_exp]..., irf_shift]
-    # all fit parameters must be positive
+    # amplitudes must be positive, irf_shift ∈ [-max, +max]
     lbs = [[0.0 for i=1:n_exp]..., -max_shift]
     ubs = [[Inf for i=1:n_exp]..., max_shift]
+
     reconv_fit = curve_fit(reconv, X, xyn[:, 3], p0, lower=lbs, upper=ubs)
     amp = reconv_fit.param[1:end-1]
     norm_amp = amp ./ sum(amp)
