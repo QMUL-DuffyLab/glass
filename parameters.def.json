@@ -3,7 +3,7 @@
 "pulse": {
   "peak_time": 200e-12,
   "fwhm": 50e-12,
-  "fluence": [1.0e11, 3.0e11, 1.0e12, 3.0e12, 1.0e13, 3.0e13, 1.0e14, 3.0e14],
+  "fluence": 1.0e14,
   "wavelength": 800e-9
   },
 "lattice": {
@@ -14,7 +14,7 @@
 "protein": {
   "hop": 10.0e-12,
   "ISC": 18.6e-9,
-  "T_T_transfer": [0.0, 18.6e-9, 1e-9, 10e-12],
+  "T_T_transfer": 0.0,
   "BChl_S_decay": 1.14e-9,
   "BChl_T_decay": 50e-6,
   "Car_T_decay": 5.5e-6,
@@ -27,7 +27,7 @@
   "xsec": 1e-14
   },
 "simulation": {
-  "rep_rate": [26.6, 10.0, 4.0, 1.5, 0.6, 0.2],
+  "rep_rate": 10.0,
   "tmax": 15e-9,
   "dt1": 1e-12,
   "dt2": 1e-9,
