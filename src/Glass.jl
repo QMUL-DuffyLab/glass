@@ -1,5 +1,5 @@
-module glass
+module Glass
 
 greet() = print("Hello World!")
 
-end # module glass
+end # module Glass

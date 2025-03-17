@@ -10,6 +10,11 @@ function parse_cmds()
             arg_type = String
             required = false
             default = "parameters.json"
+        "--outpath"
+            help = "Filename for parameters (JSON)"
+            arg_type = String
+            required = false
+            default = "out"
     end
     return parse_args(s)
 end
@@ -19,7 +24,7 @@ args = parse_cmds()
 include("src/Simulations.jl"); using .Simulations
 include("src/ReconvolutionFits.jl"); using .ReconvolutionFits
 
-outpath = joinpath("out", "test")
+outpath = joinpath(pwd(), args["outpath"])
 hist_files = Simulations.run(args["parameter_file"], 0, 1, outpath)
 # copy the paramter file to the output dir
 cp(args["parameter_file"],
