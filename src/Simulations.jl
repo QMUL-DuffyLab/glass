@@ -363,7 +363,7 @@ function plot_counts(bins, counts, labels, maxcount, outfile)
     end
 end
 
-function one_run(sim, lattice, seed, hist_file)
+function one_run(sim, lattice, seed, hist_file, tpop_file)
 
     Random.seed!(seed)
     (bins, counts, labels, ec) = generate_histogram(sim, lattice)
@@ -374,11 +374,18 @@ function one_run(sim, lattice, seed, hist_file)
     # time from the end of one data collection period to the next pulse
     pulse_interval = (1.0 / sim.rep_rate)
 
+    io = open(tpop_file, "w+") # zero out the file
+    close(io)
+
     curr_maxcount = 0
     rep = 1
     print_debug = false
     while curr_maxcount < sim.maxcount
         t = 0.0
+        println(rep, sum(n, dims=1)) # populations at start of each rep
+        open(tpop_file, "a") do io
+          writedlm(io, sum(n, dims=1))
+        end
         while t < sim.tmax
             mc_step!(lattice, n, pulse, sim.pulse_params, t, sim.dt1,
                      true, counts, sim.binwidth, print_debug)
@@ -460,10 +467,12 @@ function run(json_file, seed_start=0, n_procs=1, outpath="out")
     run = 1
     while run <= sim.repeats
         seed = seed_start + (run * n_procs)
-        hist_file = "$(hist_path)_$(run)_$(seed).txt"
+        suffix = "_$(run)_$(seed)_$(sim.maxcount).txt"
+        hist_file = "$(hist_path)_$(suffix)"
+        tpop_file = "$(joinpath(outdir, "triplets"))_$(suffix)"
         push!(hist_files, hist_file)
         println("Run $(run)")
-        counts = one_run(sim, lattice, seed, hist_file)
+        counts = one_run(sim, lattice, seed, hist_file, tpop_file)
         run += 1
     end
     hist_files

@@ -11,7 +11,7 @@ function parse_cmds()
             required = false
             default = "parameters.json"
         "--outpath"
-            help = "Filename for parameters (JSON)"
+            help = "output path"
             arg_type = String
             required = false
             default = "out"
